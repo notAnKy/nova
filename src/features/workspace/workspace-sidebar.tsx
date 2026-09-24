@@ -3,12 +3,17 @@
 import { Bell, ChevronDown, ChevronRight, Hash, House, Layers3, LockKeyhole, MessageCircle, Plus, Search, Settings2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
+import Link from "next/link";
+import { signOut } from "@/features/auth/actions";
+import { ProfileAvatar } from "@/features/profile/profile-avatar";
+import type { Profile } from "@/features/profile/profile";
 import { IconButton } from "@/components/ui/icon-button";
 import { conversations, personById, workspaces } from "@/fixtures/workspace";
 
 export type SidebarView = "home" | "activity" | "direct" | "projects" | "conversation";
 
 type WorkspaceSidebarProps = {
+  profile: Profile;
   workspaceId: string;
   selectedConversationId: string;
   view: SidebarView;
@@ -19,7 +24,7 @@ type WorkspaceSidebarProps = {
   mobileOpen: boolean;
 };
 
-export function WorkspaceSidebar({ workspaceId, selectedConversationId, view, onSelectConversation, onSelectView, onSelectWorkspace, onCloseMobile, mobileOpen }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({ profile, workspaceId, selectedConversationId, view, onSelectConversation, onSelectView, onSelectWorkspace, onCloseMobile, mobileOpen }: WorkspaceSidebarProps) {
   const [channelsOpen, setChannelsOpen] = useState(true);
   const [dmsOpen, setDmsOpen] = useState(true);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
@@ -110,7 +115,8 @@ export function WorkspaceSidebar({ workspaceId, selectedConversationId, view, on
             </div>}
           </div>
         </div>
-        <div className="sidebar-footer"><span className="sidebar-footer__dot" /><span>Phase 1 preview</span><span className="sidebar-footer__version">v0.1</span></div>
+        <div className="sidebar-account"><Link href="/settings/profile" className="sidebar-account__profile"><ProfileAvatar profile={profile} /><span>{profile.display_name}</span></Link><form action={signOut}><button type="submit">Sign out</button></form></div>
+        <div className="sidebar-footer"><span className="sidebar-footer__dot" /><span>Phase 2 preview</span><span className="sidebar-footer__version">v0.2</span></div>
       </aside>
     </>
   );

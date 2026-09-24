@@ -1,11 +1,14 @@
 "use client";
 
 import { House, Plus, Sun, Moon } from "lucide-react";
-import { Avatar } from "@/components/ui/avatar";
+import Link from "next/link";
+import { ProfileAvatar } from "@/features/profile/profile-avatar";
+import type { Profile } from "@/features/profile/profile";
 import { IconButton } from "@/components/ui/icon-button";
-import { people, type Workspace, workspaces } from "@/fixtures/workspace";
+import { type Workspace, workspaces } from "@/fixtures/workspace";
 
 type WorkspaceRailProps = {
+  profile: Profile;
   selectedWorkspaceId: string;
   onSelectWorkspace: (id: string) => void;
   onHome: () => void;
@@ -13,7 +16,7 @@ type WorkspaceRailProps = {
   onToggleTheme: () => void;
 };
 
-export function WorkspaceRail({ selectedWorkspaceId, onSelectWorkspace, onHome, theme, onToggleTheme }: WorkspaceRailProps) {
+export function WorkspaceRail({ profile, selectedWorkspaceId, onSelectWorkspace, onHome, theme, onToggleTheme }: WorkspaceRailProps) {
   return (
     <nav className="workspace-rail" aria-label="Workspaces">
       <IconButton label="App home" className="rail-home" onClick={onHome}><House size={20} strokeWidth={2} /></IconButton>
@@ -38,9 +41,7 @@ export function WorkspaceRail({ selectedWorkspaceId, onSelectWorkspace, onHome, 
         <IconButton label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={onToggleTheme}>
           {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
         </IconButton>
-        <button type="button" className="rail-profile" title="Profile controls arrive with accounts in Phase 2" aria-label="Profile preview" disabled>
-          <Avatar person={people[4]} size="sm" online />
-        </button>
+        <Link href="/settings/profile" className="rail-profile" title={`Profile settings for ${profile.display_name}`} aria-label="Profile settings"><ProfileAvatar profile={profile} /></Link>
       </div>
     </nav>
   );

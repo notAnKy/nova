@@ -10,6 +10,7 @@ import { ConversationPanel } from "@/features/conversation/conversation-panel";
 import { DetailPanel } from "@/features/conversation/detail-panel";
 import { WorkspaceRail } from "@/features/workspace/workspace-rail";
 import { WorkspaceSidebar, type SidebarView } from "@/features/workspace/workspace-sidebar";
+import type { Profile } from "@/features/profile/profile";
 
 type Theme = "dark" | "light";
 type PreviewState = "content" | "loading" | "error";
@@ -32,7 +33,7 @@ function subscribeTheme(callback: () => void) {
   };
 }
 
-export function AppShell() {
+export function AppShell({ profile }: { profile: Profile }) {
   const [workspaceId, setWorkspaceId] = useState("nova");
   const [conversationId, setConversationId] = useState("game-dev");
   const [view, setView] = useState<SidebarView>("conversation");
@@ -123,8 +124,8 @@ export function AppShell() {
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Skip to conversation</a>
-      <WorkspaceRail selectedWorkspaceId={workspaceId} onSelectWorkspace={selectWorkspace} onHome={() => selectView("home")} theme={theme} onToggleTheme={toggleTheme} />
-      <WorkspaceSidebar workspaceId={workspaceId} selectedConversationId={conversationId} view={view} onSelectConversation={selectConversation} onSelectView={selectView} onSelectWorkspace={selectWorkspace} onCloseMobile={() => setMobileNavOpen(false)} mobileOpen={mobileNavOpen} />
+      <WorkspaceRail profile={profile} selectedWorkspaceId={workspaceId} onSelectWorkspace={selectWorkspace} onHome={() => selectView("home")} theme={theme} onToggleTheme={toggleTheme} />
+      <WorkspaceSidebar profile={profile} workspaceId={workspaceId} selectedConversationId={conversationId} view={view} onSelectConversation={selectConversation} onSelectView={selectView} onSelectWorkspace={selectWorkspace} onCloseMobile={() => setMobileNavOpen(false)} mobileOpen={mobileNavOpen} />
       <main id="main-content" className="main-pane" tabIndex={-1}>
         {view === "conversation" && workspaceId === "nova" ? <ConversationPanel conversationId={conversationId} onOpenMobileNav={() => setMobileNavOpen(true)} onOpenThread={openThread} onOpenDetails={openDetails} theme={theme} onToggleTheme={toggleTheme} /> : <section className="overview-pane">
           <div className="overview-pane__top"><IconButton label="Open navigation" className="mobile-nav-trigger" onClick={() => setMobileNavOpen(true)}><Menu size={21} /></IconButton><span>{workspace.name}</span><IconButton label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} className="mobile-theme-trigger" onClick={toggleTheme}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</IconButton></div>
