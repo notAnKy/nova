@@ -29,13 +29,13 @@ Phase 2 adds GitHub sign-in and editable profiles. Workspace, channel, message, 
 
    Review the SQL first. These commands target the linked project and require your Supabase credentials; they have not been run against a remote database. The migration creates only `public.profiles`, its timestamp trigger, grants, and RLS policies. A first authenticated request inserts the user's own profile. The insert is idempotent and does not overwrite later edits.
 
-3. Under **Authentication → URL Configuration**, set **Site URL** to `http://localhost:3000` and add `http://localhost:3000/auth/callback` to **Redirect URLs**. If Next runs on another port, add that exact callback URL too. For a later deployment, add its exact `https://YOUR-DOMAIN/auth/callback` and set the production Site URL accordingly. Avoid broad production redirect wildcards.
+3. Under **Authentication → URL Configuration**, set **Site URL** to `http://localhost:3001` and add `http://localhost:3001/auth/callback` to **Redirect URLs**. For a later deployment, add its exact `https://YOUR-DOMAIN/auth/callback` and set the production Site URL accordingly. Avoid broad production redirect wildcards.
 
 4. Under **Authentication → Sign In / Providers → GitHub**, copy the Supabase provider **Callback URL**. It has the form `https://YOUR-PROJECT-REF.supabase.co/auth/v1/callback`.
 
 ## Configure GitHub OAuth
 
-1. Open [GitHub Developer settings → OAuth Apps](https://github.com/settings/developers) and register a new OAuth App. Use your app name and `http://localhost:3000` for the homepage during local development. For **Authorization callback URL**, paste the **Supabase provider callback URL** from step 4 above. This is distinct from Nova's `/auth/callback` URL.
+1. Open [GitHub Developer settings → OAuth Apps](https://github.com/settings/developers) and register a new OAuth App. Use your app name and `http://localhost:3001` for the homepage during local development. For **Authorization callback URL**, paste the **Supabase provider callback URL** from step 4 above. This is distinct from Nova's `/auth/callback` URL.
 2. Copy the GitHub **Client ID**, generate a **Client Secret**, and enter both only in Supabase **Authentication → Sign In / Providers → GitHub**. Enable the provider and save. Keep the secret in GitHub/Supabase dashboards.
 3. For production, update the GitHub homepage URL to your deployed origin. The GitHub authorization callback continues pointing to Supabase for that project.
 
