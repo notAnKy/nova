@@ -4,7 +4,7 @@ Phase 1 is a responsive, accessible frontend shell with isolated fixture data. I
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 22.13 or newer
 - pnpm 11.19.0 (`corepack enable` if needed)
 
 ## Run locally
@@ -15,6 +15,19 @@ pnpm dev
 ```
 
 Open <http://localhost:3000>. The UI labels itself as a preview. Switch fixture channels, open the thread panel, and test the mobile navigation. Composer actions are intentionally unavailable until messaging is implemented.
+
+### Windows Command Prompt with nvm
+
+If `pnpm` is not recognized, select Node.js 24 and run pnpm through Corepack:
+
+```bat
+nvm use 24.13.1
+cd /d C:\Projects\slack
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
+```
+
+If `nvm use` needs administrator permission, open Command Prompt as Administrator and rerun it. As a session-only alternative, use `set "PATH=C:\Users\Admin\AppData\Local\nvm\v24.13.1;%PATH%"` instead of `nvm use 24.13.1`. Then run the same `corepack pnpm` commands. Open the **Local** URL printed by Next.js; if port 3000 is occupied, Next.js may choose another port.
 
 ## Quality checks
 
