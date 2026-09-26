@@ -38,7 +38,10 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
   useEffect(() => {
     if (!workspaceMenuOpen) return;
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setWorkspaceMenuOpen(false);
+      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) {
+        event.preventDefault();
+        setWorkspaceMenuOpen(false);
+      }
     }
     function closeOnOutsideClick(event: PointerEvent) {
       if (!(event.target instanceof Element) || event.target.closest(".workspace-title-wrap, .workspace-menu")) return;

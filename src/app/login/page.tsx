@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { signInWithGitHub } from "@/features/auth/actions";
-import { GitHubButton } from "@/features/auth/github-button";
+import { GitHubButton, SwitchGitHubButton } from "@/features/auth/github-button";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { safeNextPath } from "@/features/auth/safe-next";
@@ -38,7 +38,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <p>Sign in to continue to your workspace.</p>
       {message && <div className="auth-alert" role="alert">{message}</div>}
       {!message && params.signed_out && <div className="auth-success" role="status">You’ve signed out.</div>}
-      {configured ? <form action={signInWithGitHub}><input type="hidden" name="next" value={next} /><GitHubButton /></form> : !message && <div className="auth-alert" role="alert">Supabase isn’t configured yet. Add your project URL and publishable key to .env.local.</div>}
+      {configured ? <form action={signInWithGitHub}><input type="hidden" name="next" value={next} /><GitHubButton />
+        <SwitchGitHubButton />
+        <p className="auth-account-hint">GitHub will show its account picker. Sign in to the other account on GitHub first if it is not listed.</p>
+      </form> : !message && <div className="auth-alert" role="alert">Supabase isn’t configured yet. Add your project URL and publishable key to .env.local.</div>}
       <div className="auth-card__foot">Your workspace is ready when you are.</div>
     </div>
   </main>;

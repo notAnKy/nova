@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import { safeNextPath } from "./safe-next";
+import { githubOAuthQueryParams } from "./github-oauth";
 
 export async function signInWithGitHub(formData: FormData) {
   if (!getSupabaseConfig()) redirect("/login?error=configuration");
@@ -17,9 +18,13 @@ export async function signInWithGitHub(formData: FormData) {
   const supabase = await createClient();
   let target: string | undefined;
   try {
+    const chooseAccount = formData.get("choose_account") === "1";
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "github",
-      options: { redirectTo: new URL("/auth/callback", origin).toString() },
+      options: {
+        redirectTo: new URL("/auth/callback", origin).toString(),
+        queryParams: githubOAuthQueryParams(chooseAccount),
+      },
     });
     if (!error) target = data.url;
   } catch { /* Network and provider errors use the same human-readable state. */ }

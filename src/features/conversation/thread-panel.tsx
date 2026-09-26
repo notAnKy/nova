@@ -25,7 +25,7 @@ export function ThreadPanel({ root, replies, olderCursor, loading, loadingOlder,
   }, []);
 
   return <aside className="thread-panel" aria-label="Message thread" onKeyDown={(event) => {
-    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+    if (event.key === "Escape" && !event.defaultPrevented && !event.nativeEvent.isComposing) { event.preventDefault(); onClose(); return; }
     if (event.key !== "Tab" || !window.matchMedia("(max-width: 720px)").matches) return;
     const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
       'button:not([disabled]), textarea:not([disabled]), summary'));

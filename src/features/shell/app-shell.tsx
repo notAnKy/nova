@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Hash, Layers3, LockKeyhole, Menu, Moon, Plus, Sun, MessageCircle } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
@@ -18,6 +18,8 @@ import type { DirectConversation } from "@/features/direct/data";
 import { createClient } from "@/lib/supabase/client";
 import { MessageSearch } from "@/features/search/message-search";
 import { ActivityView } from "@/features/activity/activity-view";
+import { listChannels } from "@/features/channels/data";
+import { listDirectConversations } from "@/features/direct/data";
 
 type Theme = "dark" | "light";
 
@@ -52,15 +54,31 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
   const [view, setView] = useState<SidebarView>(initialView ?? (channel || direct ? "conversation" : "home"));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [readConversations, setReadConversations] = useState<Set<string>>(() => new Set());
+  const [liveChannels, setLiveChannels] = useState(channels);
+  const [liveDms, setLiveDms] = useState(dms);
+  const conversationRefreshVersion = useRef(0);
   const [unreadActivity, setUnreadActivity] = useState(0);
   const [activityVersion, setActivityVersion] = useState(0);
   const theme = useSyncExternalStore<Theme>(subscribeTheme, getTheme, () => "dark");
-  const displayedChannels = channels.map((item) => readConversations.has(item.id) ? { ...item, unread: false } : item);
-  const displayedDms = dms.map((item) => readConversations.has(item.id) ? { ...item, unread: false } : item);
+  const displayedChannels = liveChannels;
+  const displayedDms = liveDms;
   const activeConversation = channel ?? direct;
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+
+  const refreshConversations = useCallback(async () => {
+    const version = ++conversationRefreshVersion.current;
+    try {
+      const [nextChannels, nextDms] = await Promise.all([
+        listChannels(db, workspace.id, profile.user_id),
+        listDirectConversations(db, workspace.id, profile.user_id),
+      ]);
+      if (version === conversationRefreshVersion.current) {
+        setLiveChannels(nextChannels);
+        setLiveDms(nextDms);
+      }
+    } catch { /* The next authorized hint or focus will retry. */ }
+  }, [db, workspace.id, profile.user_id]);
 
   const refreshActivity = useCallback(async () => {
     const { data, error } = await db.from("notifications").select("id")
@@ -80,14 +98,19 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
         subscription = db.channel(`activity:${profile.user_id}`, { config: { private: true } })
           .on("broadcast", { event: "activity.changed" }, ({ payload }) => {
             if (payload.workspace_id === workspace.id) void refreshActivity();
-          }).subscribe((status) => { if (status === "SUBSCRIBED") void refreshActivity(); });
+          })
+          .on("broadcast", { event: "conversation.changed" }, ({ payload }) => {
+            if (payload.workspace_id === workspace.id) void refreshConversations();
+          }).subscribe((status) => {
+            if (status === "SUBSCRIBED") { void refreshActivity(); void refreshConversations(); }
+          });
       } catch { /* Focus refresh remains available. */ }
     }
-    function onFocus() { if (document.visibilityState === "visible") void refreshActivity(); }
+    function onFocus() { if (document.visibilityState === "visible") { void refreshActivity(); void refreshConversations(); } }
     void connect();
     window.addEventListener("focus", onFocus);
     return () => { closed = true; window.removeEventListener("focus", onFocus); if (subscription) void db.removeChannel(subscription); };
-  }, [db, profile.user_id, workspace.id, refreshActivity]);
+  }, [db, profile.user_id, workspace.id, refreshActivity, refreshConversations]);
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -106,7 +129,7 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.querySelector<HTMLButtonElement>(mobileNavOpen ? ".sidebar-mobile-close" : 'button[aria-label="Close detail panel"]')?.focus();
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) {
         event.preventDefault();
         if (mobileNavOpen) setMobileNavOpen(false);
         else setDetailOpen(false);
@@ -177,7 +200,11 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
             eligibleMentions={eligibleMentions}
             onOpenMobileNav={() => setMobileNavOpen(true)} onOpenDetails={() => setDetailOpen(true)}
             onOpenThread={() => setDetailOpen(false)}
-            onRead={() => setReadConversations((current) => new Set(current).add(activeConversation.id))}
+            onRead={() => {
+              setLiveChannels((current) => current.map((item) => item.id === activeConversation.id ? { ...item, unread: false } : item));
+              setLiveDms((current) => current.map((item) => item.id === activeConversation.id ? { ...item, unread: false } : item));
+              void refreshConversations();
+            }}
             theme={theme} onToggleTheme={toggleTheme} />
         : <section className="overview-pane">
           <div className="overview-pane__top"><IconButton label="Open navigation" className="mobile-nav-trigger" onClick={() => setMobileNavOpen(true)}><Menu size={21} /></IconButton><span>{workspace.name}</span><IconButton label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} className="mobile-theme-trigger" onClick={toggleTheme}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</IconButton></div>

@@ -9,3 +9,10 @@ export function GitHubButton() {
     {pending ? "Connecting to GitHub…" : "Continue with GitHub"}
   </button>;
 }
+
+export function SwitchGitHubButton() {
+  const { pending } = useFormStatus();
+  return <button className="text-action auth-switch-account" type="submit" name="choose_account" value="1" disabled={pending}>
+    Use another GitHub account
+  </button>;
+}

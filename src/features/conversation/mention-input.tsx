@@ -12,11 +12,12 @@ function findQuery(value: string, caret: number): Query | null {
 }
 
 export function MentionInput({ id, value, spans, onChange, eligible, onSubmit, disabled, rows,
-  placeholder, describedBy }: {
+  placeholder, describedBy, onPaste }: {
   id: string; value: string; spans: MentionSpan[];
   onChange: (value: string, spans: MentionSpan[]) => void;
   eligible: Profile[]; onSubmit: () => void; disabled?: boolean; rows?: number;
   placeholder?: string; describedBy?: string;
+  onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const [query, setQuery] = useState<Query | null>(null);
@@ -49,6 +50,7 @@ export function MentionInput({ id, value, spans, onChange, eligible, onSubmit, d
 
   return <div className="mention-input">
     <textarea ref={input} id={id} role="combobox" value={value} rows={rows} maxLength={4000}
+      onPaste={onPaste}
       disabled={disabled} placeholder={placeholder} aria-describedby={describedBy}
       aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={query !== null}
       aria-controls={query !== null ? menuId : undefined}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Hash, LockKeyhole, Menu, Moon, PanelRight, Search, Sun, MessageCircle, UsersRound } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
@@ -15,25 +15,9 @@ import type { Channel, ChannelMessage, MessageCursor, MessagePage } from "./type
 import type { DirectConversation } from "@/features/direct/data";
 import { cleanUpOwnAttachments } from "@/features/conversation/attachment-files";
 import { uploadMessageAttachments } from "@/features/conversation/direct-upload";
+import { mergeFresh, mergeMessages, nearTimelineBottom, shouldAdvanceReadCursor } from "./timeline-behavior";
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function mergeMessages(existing: ChannelMessage[], incoming: ChannelMessage[]) {
-  const byId = new Map(existing.map((message) => [message.id, message]));
-  incoming.forEach((message) => {
-    const previous = byId.get(message.id);
-    const version = message.deleted_at ?? message.edited_at ?? message.created_at;
-    const previousVersion = previous?.deleted_at ?? previous?.edited_at ?? previous?.created_at;
-    if (!previous || !previousVersion || version >= previousVersion) byId.set(message.id, message);
-  });
-  return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-}
-
-function mergeFresh(existing: ChannelMessage[], incoming: ChannelMessage[]) {
-  const byId = new Map(existing.map((message) => [message.id, message]));
-  incoming.forEach((message) => byId.set(message.id, message));
-  return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-}
 
 export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentions, onOpenMobileNav, onOpenDetails, onOpenThread, onRead, theme, onToggleTheme }: {
   channel: Channel | DirectConversation; initialPage: MessagePage; currentUser: Profile; eligibleMentions: Profile[];
@@ -50,6 +34,7 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   const [olderCursor, setOlderCursor] = useState<MessageCursor | null>(initialPage.olderCursor);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [notice, setNotice] = useState("");
+  const [newMessageIds, setNewMessageIds] = useState<string[]>([]);
   const [threadRoot, setThreadRoot] = useState<ChannelMessage | null>(null);
   const [replies, setReplies] = useState<ChannelMessage[]>([]);
   const [threadCursor, setThreadCursor] = useState<MessageCursor | null>(null);
@@ -61,6 +46,9 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   const lastMarked = useRef("");
   const onReadRef = useRef(onRead);
   const timeline = useRef<HTMLDivElement>(null);
+  const initialScrollDone = useRef(false);
+  const atBottom = useRef(true);
+  const newIds = useRef(new Set<string>());
   const isDirect = channel.kind === "direct" || channel.kind === "group_direct";
   const displayName = isDirect ? channel.displayName : channel.name;
   const conversationLabel = isDirect ? displayName : `#${displayName}`;
@@ -148,7 +136,8 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   }, [threadId]);
 
   const markRead = useCallback(async (id: string) => {
-    if (!id || lastMarked.current === id || document.visibilityState !== "visible") return;
+    if (!id || lastMarked.current === id ||
+      !shouldAdvanceReadCursor(document.visibilityState === "visible" && document.hasFocus(), atBottom.current)) return;
     lastMarked.current = id;
     const { error } = await db.rpc("mark_channel_read", { p_conversation_id: channel.id, p_message_id: id });
     if (error) { lastMarked.current = ""; return; }
@@ -168,18 +157,44 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
         getMessagePage(db, channel.id),
         getMessagesByIds(db, channel.id, loadedIds.current),
       ]);
+      const added = latest.messages.filter((row) => !loadedIds.current.includes(row.id) &&
+        !row.parent_message_id && row.author_id !== currentUser.user_id && !newIds.current.has(row.id));
+      if (!atBottom.current && added.length) {
+        added.forEach((row) => newIds.current.add(row.id));
+        setNewMessageIds((current) => [...current, ...added.map((row) => row.id)]);
+      }
       setMessages((current) => mergeFresh(current, [...loaded, ...latest.messages]));
-      const newest = latest.messages.at(-1);
-      if (newest) void markRead(newest.id);
       setNotice("");
     } catch { setNotice("Live updates paused. Reopen this conversation to refresh."); }
-  }, [db, channel.id, markRead, router]);
+  }, [db, channel.id, currentUser.user_id, router]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (initialScrollDone.current) return;
+    initialScrollDone.current = true;
     const newest = initialPage.messages.at(-1);
-    if (newest) void markRead(newest.id);
     timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
+    atBottom.current = true;
+    if (newest) void markRead(newest.id);
   }, [initialPage, markRead]);
+
+  useLayoutEffect(() => {
+    if (!atBottom.current || loadingOlder) return;
+    timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
+    const newest = messages.at(-1);
+    if (newest) void markRead(newest.id);
+  }, [messages, loadingOlder, markRead]);
+
+  function onTimelineScroll() {
+    const element = timeline.current;
+    if (!element) return;
+    atBottom.current = nearTimelineBottom(element.scrollTop, element.clientHeight, element.scrollHeight);
+    if (atBottom.current && newIds.current.size) {
+      newIds.current.clear();
+      setNewMessageIds([]);
+      const newest = messages.at(-1);
+      if (newest) void markRead(newest.id);
+    }
+  }
 
   useEffect(() => {
     let closed = false;
@@ -197,11 +212,16 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
             const root = await getMessageById(db, channel.id, row.parent_message_id);
             if (!closed && root) reflectMessage(root);
           } else {
+            const unseen = event === "message.created" && !loadedIds.current.includes(row.id) &&
+              row.author_id !== currentUser.user_id && !newIds.current.has(row.id);
+            if (unseen && !atBottom.current) {
+              newIds.current.add(row.id);
+              setNewMessageIds((current) => [...current, row.id]);
+            }
             setMessages((current) => current.some((item) => item.id === row.id)
               ? current.map((item) => item.id === row.id ? row : item)
               : event === "message.created" ? mergeMessages(current, [row]) : current);
             if (row.id === threadId) setThreadRoot(row);
-            if (document.visibilityState === "visible") void markRead(row.id);
           }
         } else { void refreshDurable(); void refreshThread(); }
       } catch { if (!closed) { void refreshDurable(); void refreshThread(); } }
@@ -233,10 +253,11 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
       document.removeEventListener("visibilitychange", onFocus);
       if (subscription) void db.removeChannel(subscription);
     };
-  }, [db, channel.id, markRead, refreshDurable, refreshThread, reflectMessage, threadId]);
+  }, [db, channel.id, currentUser.user_id, refreshDurable, refreshThread, reflectMessage, threadId]);
 
   async function loadOlder() {
     if (!olderCursor || loadingOlder) return;
+    atBottom.current = false;
     setLoadingOlder(true);
     const element = timeline.current;
     const beforeHeight = element?.scrollHeight ?? 0;
@@ -293,7 +314,12 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
         void markRead(row.id);
       }
     } catch { void refreshDurable(); }
-    if (!parentId) timeline.current?.scrollTo({ top: timeline.current.scrollHeight, behavior: "smooth" });
+    if (!parentId) {
+      atBottom.current = true;
+      newIds.current.clear();
+      setNewMessageIds([]);
+      requestAnimationFrame(() => timeline.current?.scrollTo({ top: timeline.current.scrollHeight, behavior: "smooth" }));
+    }
     return { ok: true };
   }
 
@@ -353,19 +379,23 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
         }}><PanelRight size={19} /></IconButton>
       </div>
     </header>
-    <div className="timeline" ref={timeline} role="log" aria-label="Message history" aria-live="off">
+    <div className="timeline" ref={timeline} role="log" aria-label="Message history" aria-live="off" onScroll={onTimelineScroll}>
       {olderCursor && <button className="load-older" type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "Loading…" : "Load older messages"}</button>}
       <div className="timeline-intro"><span className="timeline-intro__icon"><Icon size={29} strokeWidth={1.6} /></span>
         <h2>{isDirect ? `Start a message with ${displayName}` : `Welcome to #${channel.name}`}</h2>
         <p>{isDirect ? "Only participants can read and send here." : channel.topic || "This is the beginning of this channel."}</p></div>
-      {messages.length ? <div className="timeline-messages">{messages.map((message) =>
-        <MessageItem key={message.id} message={message} currentUserId={currentUser.user_id}
+      {messages.length ? <div className="timeline-messages">{messages.map((message) => <div key={message.id}>
+        {newMessageIds[0] === message.id && <div className="new-message-separator" role="status">New messages</div>}
+        <MessageItem message={message} currentUserId={currentUser.user_id}
           workspaceId={channel.workspace_id}
           eligible={eligibleMentions} onEdit={edit} onDelete={remove} onReact={react}
-          onReply={setThreadUrl} />)}</div>
+          onReply={setThreadUrl} /></div>)}</div>
         : <StateView title="No messages yet" description="Start the conversation with a message to your team." />}
       {notice && <p className="channel-notice" role="status">{notice}</p>}
     </div>
+    {newMessageIds.length > 0 && <button className="jump-new-messages" type="button" onClick={() => {
+      timeline.current?.scrollTo({ top: timeline.current.scrollHeight, behavior: "smooth" });
+    }}>↓ {newMessageIds.length} new {newMessageIds.length === 1 ? "message" : "messages"}</button>}
     <Composer conversationLabel={conversationLabel} eligible={eligibleMentions} onSend={send}
       disabled={!!notice && notice.startsWith("Your access")} />
   </section>

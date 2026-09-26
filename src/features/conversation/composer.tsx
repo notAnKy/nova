@@ -6,7 +6,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import type { Profile } from "@/features/profile/profile";
 import { MentionInput } from "./mention-input";
 import { encodeMentions, type MentionSpan } from "./mentions";
-import { formatFileSize, validateFileSelection } from "./attachment-files";
+import { appendAttachmentFiles, formatFileSize, prepareClipboardFiles } from "./attachment-files";
 
 export type MessageMutationResult = { ok: true } | { ok: false; error: string };
 
@@ -22,10 +22,9 @@ export function Composer({ conversationLabel, eligible, onSend, disabled = false
   const fileInput = useRef<HTMLInputElement>(null);
 
   function addFiles(selected: File[]) {
-    const next = [...files, ...selected];
-    const problem = validateFileSelection(next);
-    if (problem) { setError(problem); return; }
-    setFiles(next);
+    const next = appendAttachmentFiles(files, selected);
+    if (next.error) { setError(next.error); return; }
+    setFiles(next.files);
     setError("");
   }
 
@@ -48,6 +47,16 @@ export function Composer({ conversationLabel, eligible, onSend, disabled = false
       <label className="sr-only" htmlFor={id}>Message {conversationLabel}</label>
       <MentionInput id={id} value={draft} spans={spans} eligible={eligible}
         onChange={(value, nextSpans) => { setDraft(value); setSpans(nextSpans); }} onSubmit={() => void send()}
+        onPaste={(event) => {
+          const clipboard = event.clipboardData;
+          const selected = Array.from(clipboard.files.length ? clipboard.files :
+            Array.from(clipboard.items).filter((item) => item.kind === "file").map((item) => item.getAsFile()).filter((file): file is File => !!file));
+          if (!selected.length) return;
+          event.preventDefault();
+          const prepared = prepareClipboardFiles(selected);
+          if (prepared.error) { setError(prepared.error); return; }
+          addFiles(prepared.files);
+        }}
         placeholder={disabled ? "You can’t send to this conversation" : `Message ${conversationLabel}`}
         rows={3} disabled={disabled || sending} describedBy={`${id}-note`} />
       {files.length > 0 && <ul className="composer-files" aria-label="Selected files">{files.map((file, index) =>
