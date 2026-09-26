@@ -12,5 +12,5 @@ export default async function ProjectsPage({ params, searchParams }: { params: P
   const context = await projectPageContext(workspaceSlug);
   const { projects, hasMore } = await listProjects(context.db, context.workspace.id, page);
   return projectPageShell(context, <ProjectList workspace={context.workspace} role={context.role}
-    projects={projects} page={page} hasMore={hasMore} />);
+    projects={projects} page={page} hasMore={hasMore} />, `/w/${context.workspace.slug}/projects`);
 }

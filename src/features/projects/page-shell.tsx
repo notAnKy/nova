@@ -21,7 +21,7 @@ export async function projectPageContext(workspaceSlug: string) {
 }
 
 export async function projectPageShell(context: Awaited<ReturnType<typeof projectPageContext>>,
-  content: ReactNode) {
+  content: ReactNode, renderedPath: string) {
   const { db, user, workspace, role } = context;
   const [profile, workspaces, channels, dms] = await Promise.all([
     getOrCreateProfile(user), listWorkspaces(db), listChannels(db, workspace.id, user.id),
@@ -29,5 +29,5 @@ export async function projectPageShell(context: Awaited<ReturnType<typeof projec
   ]);
   return <AppShell profile={profile} workspace={workspace} workspaces={workspaces} role={role}
     channels={channels} dms={dms} channel={null} direct={null} initialPage={null}
-    channelMemberIds={[]} workspaceMembers={[]} initialView="projects" projectsContent={content} />;
+    channelMemberIds={[]} workspaceMembers={[]} renderedPath={renderedPath} projectsContent={content} />;
 }

@@ -42,5 +42,6 @@ export default async function ChannelPage({ params, searchParams }: {
     });
   return <AppShell key={`${workspace.id}:${channel.id}`} profile={profile} workspace={workspace} workspaces={workspaces}
     role={role} channels={channels} dms={dms} channel={channel} direct={null} initialPage={initialPage}
-    workspaceMembers={workspaceMembers} channelMemberIds={channelMemberIds} eligibleMentions={eligibleMentions} />;
+    workspaceMembers={workspaceMembers} channelMemberIds={channelMemberIds} eligibleMentions={eligibleMentions}
+    renderedPath={`/w/${workspace.slug}/c/${channel.slug}`} />;
 }

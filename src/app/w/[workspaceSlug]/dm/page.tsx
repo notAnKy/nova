@@ -22,5 +22,5 @@ export default async function DirectIndexPage({ params }: { params: Promise<{ wo
   if (!role) notFound();
   return <AppShell key={`${workspace.id}:dm`} profile={profile} workspace={workspace} workspaces={workspaces}
     role={role} channels={channels} dms={dms} channel={null} direct={null} initialPage={null}
-    initialView="direct" channelMemberIds={[]} workspaceMembers={[]} />;
+    renderedPath={`/w/${workspace.slug}/dm`} channelMemberIds={[]} workspaceMembers={[]} />;
 }

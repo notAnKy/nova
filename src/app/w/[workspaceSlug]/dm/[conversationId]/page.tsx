@@ -38,5 +38,6 @@ export default async function DirectPage({ params, searchParams }: {
   const visibleDms = dms.some((item) => item.id === direct.id) ? dms : [...dms, direct];
   return <AppShell key={`${workspace.id}:${direct.id}`} profile={profile} workspace={workspace} workspaces={workspaces}
     role={role} channels={channels} dms={visibleDms} channel={null} direct={direct} initialPage={initialPage}
-    channelMemberIds={[]} workspaceMembers={[]} eligibleMentions={direct.participants} />;
+    channelMemberIds={[]} workspaceMembers={[]} eligibleMentions={direct.participants}
+    renderedPath={`/w/${workspace.slug}/dm/${direct.id}`} />;
 }

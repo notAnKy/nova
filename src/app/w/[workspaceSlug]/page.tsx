@@ -24,5 +24,6 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
   ]);
   if (!role) notFound();
   return <AppShell key={workspace.id} profile={profile} workspace={workspace} workspaces={workspaces}
-    role={role} channels={channels} dms={dms} channel={null} direct={null} initialPage={null} channelMemberIds={[]} workspaceMembers={[]} />;
+    role={role} channels={channels} dms={dms} channel={null} direct={null} initialPage={null} channelMemberIds={[]} workspaceMembers={[]}
+    renderedPath={`/w/${workspace.slug}`} />;
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Hash, Layers3, LockKeyhole, Menu, Moon, Plus, Sun, MessageCircle } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { StateView } from "@/components/ui/state-view";
@@ -21,6 +21,7 @@ import { ActivityView } from "@/features/activity/activity-view";
 import { listChannels } from "@/features/channels/data";
 import { listDirectConversations } from "@/features/direct/data";
 import { ConversationSkeleton } from "@/components/ui/skeleton";
+import { navigationPresentation, type PendingNavigation } from "@/features/shell/navigation-state";
 
 type Theme = "dark" | "light";
 
@@ -42,19 +43,20 @@ function subscribeTheme(callback: () => void) {
   };
 }
 
-export function AppShell({ profile, workspace, workspaces, role, channels, dms, channel, direct, initialPage, workspaceMembers, channelMemberIds, eligibleMentions = [], initialView, projectsContent }: {
+export function AppShell({ profile, workspace, workspaces, role, channels, dms, channel, direct, initialPage, workspaceMembers, channelMemberIds, eligibleMentions = [], renderedPath, projectsContent }: {
   profile: Profile; workspace: Workspace; workspaces: Workspace[]; role: WorkspaceRole;
   channels: Channel[]; dms: DirectConversation[]; channel: Channel | null; direct: DirectConversation | null;
-  initialPage: MessagePage | null; initialView?: SidebarView;
+  initialPage: MessagePage | null; renderedPath: string;
   projectsContent?: React.ReactNode;
   workspaceMembers: WorkspaceMember[]; channelMemberIds: string[];
   eligibleMentions?: Profile[];
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [navigationPending, startNavigation] = useTransition();
-  const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingNavigation | null>(null);
   const db = useMemo(() => createClient(), []);
-  const [view, setView] = useState<SidebarView>(initialView ?? (channel || direct ? "conversation" : "home"));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [liveChannels, setLiveChannels] = useState(channels);
@@ -66,7 +68,17 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
   const displayedChannels = liveChannels;
   const displayedDms = liveDms;
   const activeConversation = channel ?? direct;
-  const openingConversationId = navigationPending ? pendingConversationId : null;
+  const presentation = navigationPresentation({ pathname, query: searchParams.toString(), renderedPath,
+    workspaceSlug: workspace.slug, activeConversationId: activeConversation?.id ?? null,
+    channels: displayedChannels, pending, transitionPending: navigationPending });
+  const { view, selectedConversationId, pendingConversationId, showSkeleton } = presentation;
+
+  const navigate = useCallback((href: string, destination: SidebarView | null, conversationId?: string) => {
+    setPending({ href, view: destination, conversationId });
+    startNavigation(() => router.push(href));
+    setMobileNavOpen(false);
+    setDetailOpen(false);
+  }, [router, startNavigation]);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
@@ -119,12 +131,12 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault(); setView("search"); setMobileNavOpen(false); setDetailOpen(false);
+        event.preventDefault(); navigate(`/w/${workspace.slug}?view=search`, "search");
       }
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, []);
+  }, [navigate, workspace.slug]);
 
   useEffect(() => {
     if (!mobileNavOpen && !detailOpen) return;
@@ -159,37 +171,30 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
 
   function selectWorkspace(id: string) {
     const next = workspaces.find((item) => item.id === id);
-    if (next && next.id !== workspace.id) router.push(`/w/${next.slug}`);
+    if (next && next.id !== workspace.id) navigate(`/w/${next.slug}`, null);
     setMobileNavOpen(false);
   }
 
   function selectChannel(id: string) {
     const next = displayedChannels.find((item) => item.id === id);
     if (!next) return;
-    if (activeConversation?.id !== id || view !== "conversation") setPendingConversationId(id);
-    startNavigation(() => router.push(`/w/${workspace.slug}/c/${next.slug}`));
-    setMobileNavOpen(false);
-    setDetailOpen(false);
+    navigate(`/w/${workspace.slug}/c/${next.slug}`, "conversation", id);
   }
 
   function selectDirect(id: string) {
     if (!displayedDms.some((item) => item.id === id)) return;
-    if (activeConversation?.id !== id || view !== "conversation") setPendingConversationId(id);
-    startNavigation(() => router.push(`/w/${workspace.slug}/dm/${id}`));
-    setMobileNavOpen(false);
-    setDetailOpen(false);
+    navigate(`/w/${workspace.slug}/dm/${id}`, "conversation", id);
   }
 
   function selectView(next: SidebarView) {
-    setPendingConversationId(null);
-    if (next === "home") router.push(`/w/${workspace.slug}`);
-    else if (next === "direct") router.push(`/w/${workspace.slug}/dm`);
-    else if (next === "projects") router.push(`/w/${workspace.slug}/projects`);
-    setView(next); setMobileNavOpen(false); setDetailOpen(false);
+    const base = `/w/${workspace.slug}`;
+    const href = next === "home" ? base : next === "activity" || next === "search" ? `${base}?view=${next}`
+      : next === "direct" ? `${base}/dm` : next === "projects" ? `${base}/projects` : `${base}/settings`;
+    navigate(href, next);
   }
 
   function jumpToMessage(url: string) {
-    setView("conversation"); setMobileNavOpen(false); setDetailOpen(false); router.push(url);
+    navigate(url, "conversation");
   }
 
   return <div className="app-frame">
@@ -197,13 +202,13 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
     <WorkspaceRail profile={profile} workspaces={workspaces} selectedWorkspaceId={workspace.id}
       onSelectWorkspace={selectWorkspace} onHome={() => selectView("home")} theme={theme} onToggleTheme={toggleTheme} />
     <WorkspaceSidebar profile={profile} workspace={workspace} workspaces={workspaces} channels={displayedChannels} dms={displayedDms}
-      canCreate={role === "owner" || role === "admin"} selectedConversationId={activeConversation?.id ?? ""}
-      pendingConversationId={openingConversationId} view={view}
+      canCreate={role === "owner" || role === "admin"} selectedConversationId={selectedConversationId}
+      pendingConversationId={pendingConversationId} view={view}
       onSelectConversation={selectChannel} onSelectDirect={selectDirect} onSelectView={selectView} onSelectWorkspace={selectWorkspace}
       onCloseMobile={() => setMobileNavOpen(false)} mobileOpen={mobileNavOpen}
       activityBadge={unreadActivity ? unreadActivity >= 100 ? "99+" : String(unreadActivity) : undefined} />
     <main id="main-content" className="main-pane" tabIndex={-1}>
-      {openingConversationId ? <ConversationSkeleton />
+      {showSkeleton ? <ConversationSkeleton />
         : view === "conversation" && activeConversation && initialPage
         ? <ChannelPanel key={activeConversation.id} channel={activeConversation} initialPage={initialPage} currentUser={profile}
             eligibleMentions={eligibleMentions}
@@ -228,12 +233,12 @@ export function AppShell({ profile, workspace, workspaces, role, channels, dms, 
             : view === "projects" && projectsContent ? projectsContent : <SectionPreview />}
         </section>}
     </main>
-    {detailOpen && channel && view === "conversation" && <>
+    {detailOpen && !showSkeleton && channel && view === "conversation" && <>
       <button className="detail-scrim" type="button" aria-label="Close detail panel" onClick={() => setDetailOpen(false)} />
       <ChannelDetails channel={channel} role={role} currentUserId={profile.user_id}
         workspaceMembers={workspaceMembers} memberIds={channelMemberIds} onClose={() => setDetailOpen(false)} />
     </>}
-    {detailOpen && direct && view === "conversation" && <>
+    {detailOpen && !showSkeleton && direct && view === "conversation" && <>
       <button className="detail-scrim" type="button" aria-label="Close detail panel" onClick={() => setDetailOpen(false)} />
       <DirectDetails conversation={direct} onClose={() => setDetailOpen(false)} />
     </>}

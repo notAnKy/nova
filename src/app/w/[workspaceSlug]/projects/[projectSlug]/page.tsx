@@ -23,5 +23,6 @@ export default async function ProjectDetailPage({ params, searchParams }: {
     getWorkspaceMembers(context.db, context.workspace.id),
   ]);
   return projectPageShell(context, <ProjectDetail workspace={context.workspace} project={project}
-    role={context.role} currentUserId={context.user.id} members={members} pages={pages} {...items} />);
+    role={context.role} currentUserId={context.user.id} members={members} pages={pages} {...items} />,
+    `/w/${context.workspace.slug}/projects/${project.slug}`);
 }

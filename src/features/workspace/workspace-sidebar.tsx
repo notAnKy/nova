@@ -11,7 +11,7 @@ import type { Workspace } from "@/features/workspaces/types";
 import type { Channel } from "@/features/channels/types";
 import type { DirectConversation } from "@/features/direct/data";
 
-export type SidebarView = "home" | "activity" | "search" | "direct" | "projects" | "conversation";
+export type SidebarView = "home" | "activity" | "search" | "direct" | "projects" | "settings" | "conversation";
 
 // The page shell is recreated for each conversation route. Keep only disclosure UI
 // state across those client navigations; no workspace data is cached here.
@@ -26,7 +26,7 @@ type WorkspaceSidebarProps = {
   canCreate: boolean;
   selectedConversationId: string;
   pendingConversationId?: string | null;
-  view: SidebarView;
+  view: SidebarView | null;
   onSelectConversation: (id: string) => void;
   onSelectDirect: (id: string) => void;
   onSelectView: (view: SidebarView) => void;
@@ -72,7 +72,7 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
             <span className="workspace-plan">Your team’s space</span>
           </div>
           <IconButton label="Close navigation" className="sidebar-mobile-close" onClick={onCloseMobile}><X size={18} /></IconButton>
-          <Link href={`/w/${workspace.slug}/settings`} className="icon-button sidebar-settings" aria-label="Workspace settings"><Settings2 size={18} /></Link>
+          <button type="button" className="icon-button sidebar-settings" aria-label="Workspace settings" onClick={() => onSelectView("settings")}><Settings2 size={18} /></button>
         </div>
         {workspaceMenuOpen && (
           <div className="workspace-menu" id="workspace-menu">
@@ -93,7 +93,7 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
             <SidebarNavItem icon={<Bell size={18} />} label="Activity" badge={activityBadge} active={view === "activity"} onClick={() => onSelectView("activity")} />
             <SidebarNavItem icon={<MessageCircle size={18} />} label="Direct messages" active={view === "direct"} onClick={() => onSelectView("direct")} />
             <SidebarNavItem icon={<Layers3 size={18} />} label="Projects" active={view === "projects"} onClick={() => onSelectView("projects")} />
-            <Link href={`/w/${workspace.slug}/settings`} className="sidebar-nav-item" onClick={onCloseMobile}><Settings2 size={18} /><span>Workspace settings</span></Link>
+            <SidebarNavItem icon={<Settings2 size={18} />} label="Workspace settings" active={view === "settings"} onClick={() => onSelectView("settings")} />
           </nav>
           <div className="sidebar-section">
             <div className="sidebar-section__head">
