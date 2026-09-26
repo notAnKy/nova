@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { EscapeNavigation } from "@/features/shell/escape-navigation";
 
@@ -9,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en" suppressHydrationWarning><body><EscapeNavigation />{children}<Analytics /></body></html>;
+  return <html lang="en" suppressHydrationWarning><body><EscapeNavigation />{children}<Analytics /><SpeedInsights /></body></html>;
 }
