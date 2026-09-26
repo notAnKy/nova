@@ -1,19 +1,25 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { ArrowRight, Bell, Hash, Layers3, Menu, Moon, Sun } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowRight, Hash, Layers3, LockKeyhole, Menu, Moon, Plus, Sun, MessageCircle } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { StateView } from "@/components/ui/state-view";
-import { ConversationSkeleton } from "@/components/ui/skeleton";
-import { conversations, workspaces } from "@/fixtures/workspace";
-import { ConversationPanel } from "@/features/conversation/conversation-panel";
-import { DetailPanel } from "@/features/conversation/detail-panel";
+import { ChannelPanel } from "@/features/channels/channel-panel";
+import { ChannelDetails } from "@/features/channels/channel-details";
 import { WorkspaceRail } from "@/features/workspace/workspace-rail";
 import { WorkspaceSidebar, type SidebarView } from "@/features/workspace/workspace-sidebar";
 import type { Profile } from "@/features/profile/profile";
+import type { Workspace, WorkspaceMember, WorkspaceRole } from "@/features/workspaces/types";
+import type { Channel, MessagePage } from "@/features/channels/types";
+import { DirectDetails } from "@/features/direct/direct-details";
+import type { DirectConversation } from "@/features/direct/data";
+import { createClient } from "@/lib/supabase/client";
+import { MessageSearch } from "@/features/search/message-search";
+import { ActivityView } from "@/features/activity/activity-view";
 
 type Theme = "dark" | "light";
-type PreviewState = "content" | "loading" | "error";
 
 function getTheme(): Theme {
   const stored = window.localStorage.getItem("nova-theme");
@@ -33,19 +39,65 @@ function subscribeTheme(callback: () => void) {
   };
 }
 
-export function AppShell({ profile }: { profile: Profile }) {
-  const [workspaceId, setWorkspaceId] = useState("nova");
-  const [conversationId, setConversationId] = useState("game-dev");
-  const [view, setView] = useState<SidebarView>("conversation");
+export function AppShell({ profile, workspace, workspaces, role, channels, dms, channel, direct, initialPage, workspaceMembers, channelMemberIds, eligibleMentions = [], initialView, projectsContent }: {
+  profile: Profile; workspace: Workspace; workspaces: Workspace[]; role: WorkspaceRole;
+  channels: Channel[]; dms: DirectConversation[]; channel: Channel | null; direct: DirectConversation | null;
+  initialPage: MessagePage | null; initialView?: SidebarView;
+  projectsContent?: React.ReactNode;
+  workspaceMembers: WorkspaceMember[]; channelMemberIds: string[];
+  eligibleMentions?: Profile[];
+}) {
+  const router = useRouter();
+  const db = useMemo(() => createClient(), []);
+  const [view, setView] = useState<SidebarView>(initialView ?? (channel || direct ? "conversation" : "home"));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [threadMessageId, setThreadMessageId] = useState<string | null>(null);
+  const [readConversations, setReadConversations] = useState<Set<string>>(() => new Set());
+  const [unreadActivity, setUnreadActivity] = useState(0);
+  const [activityVersion, setActivityVersion] = useState(0);
   const theme = useSyncExternalStore<Theme>(subscribeTheme, getTheme, () => "dark");
-  const [previewState, setPreviewState] = useState<PreviewState>("content");
+  const displayedChannels = channels.map((item) => readConversations.has(item.id) ? { ...item, unread: false } : item);
+  const displayedDms = dms.map((item) => readConversations.has(item.id) ? { ...item, unread: false } : item);
+  const activeConversation = channel ?? direct;
+
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+
+  const refreshActivity = useCallback(async () => {
+    const { data, error } = await db.from("notifications").select("id")
+      .eq("workspace_id", workspace.id).is("read_at", null).limit(100);
+    if (!error) setUnreadActivity((data ?? []).length);
+    setActivityVersion((value) => value + 1);
+  }, [db, workspace.id]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    let closed = false;
+    let subscription: ReturnType<typeof db.channel> | null = null;
+    queueMicrotask(() => { if (!closed) void refreshActivity(); });
+    async function connect() {
+      try {
+        await db.realtime.setAuth();
+        if (closed) return;
+        subscription = db.channel(`activity:${profile.user_id}`, { config: { private: true } })
+          .on("broadcast", { event: "activity.changed" }, ({ payload }) => {
+            if (payload.workspace_id === workspace.id) void refreshActivity();
+          }).subscribe((status) => { if (status === "SUBSCRIBED") void refreshActivity(); });
+      } catch { /* Focus refresh remains available. */ }
+    }
+    function onFocus() { if (document.visibilityState === "visible") void refreshActivity(); }
+    void connect();
+    window.addEventListener("focus", onFocus);
+    return () => { closed = true; window.removeEventListener("focus", onFocus); if (subscription) void db.removeChannel(subscription); };
+  }, [db, profile.user_id, workspace.id, refreshActivity]);
+
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault(); setView("search"); setMobileNavOpen(false); setDetailOpen(false);
+      }
+    }
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
 
   useEffect(() => {
     if (!mobileNavOpen && !detailOpen) return;
@@ -53,7 +105,6 @@ export function AppShell({ profile }: { profile: Profile }) {
     if (!panel) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.querySelector<HTMLButtonElement>(mobileNavOpen ? ".sidebar-mobile-close" : 'button[aria-label="Close detail panel"]')?.focus();
-
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -62,20 +113,15 @@ export function AppShell({ profile }: { profile: Profile }) {
         return;
       }
       if (event.key !== "Tab" || (!mobileNavOpen && !window.matchMedia("(max-width: 1260px)").matches)) return;
-      const focusable = Array.from(panel!.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], textarea:not([disabled])'))
+      const focusable = Array.from(panel!.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], textarea:not([disabled]), select:not([disabled])'))
         .filter((element) => getComputedStyle(element).display !== "none");
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
-
     document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (previous?.isConnected) previous.focus();
-    };
+    return () => { document.removeEventListener("keydown", handleKeyDown); if (previous?.isConnected) previous.focus(); };
   }, [mobileNavOpen, detailOpen]);
 
   function toggleTheme() {
@@ -85,78 +131,124 @@ export function AppShell({ profile }: { profile: Profile }) {
   }
 
   function selectWorkspace(id: string) {
-    setWorkspaceId(id);
-    setView(id === "nova" ? "conversation" : "home");
-    setConversationId("game-dev");
-    setDetailOpen(false);
+    const next = workspaces.find((item) => item.id === id);
+    if (next && next.id !== workspace.id) router.push(`/w/${next.slug}`);
     setMobileNavOpen(false);
-    setPreviewState("content");
   }
 
-  function selectConversation(id: string) {
-    setConversationId(id);
+  function selectChannel(id: string) {
+    const next = channels.find((item) => item.id === id);
+    if (next) router.push(`/w/${workspace.slug}/c/${next.slug}`);
     setView("conversation");
-    setDetailOpen(false);
-    setThreadMessageId(null);
     setMobileNavOpen(false);
-    setPreviewState("content");
+    setDetailOpen(false);
+  }
+
+  function selectDirect(id: string) {
+    if (dms.some((item) => item.id === id)) router.push(`/w/${workspace.slug}/dm/${id}`);
+    setView("conversation");
+    setMobileNavOpen(false);
+    setDetailOpen(false);
   }
 
   function selectView(next: SidebarView) {
-    setView(next);
-    setDetailOpen(false);
-    setMobileNavOpen(false);
-    setPreviewState("content");
+    if (next === "home") router.push(`/w/${workspace.slug}`);
+    else if (next === "direct") router.push(`/w/${workspace.slug}/dm`);
+    else if (next === "projects") router.push(`/w/${workspace.slug}/projects`);
+    setView(next); setMobileNavOpen(false); setDetailOpen(false);
   }
 
-  function openThread(id: string) {
-    setThreadMessageId(id);
-    setDetailOpen(true);
+  function jumpToMessage(url: string) {
+    setView("conversation"); setMobileNavOpen(false); setDetailOpen(false); router.push(url);
   }
 
-  function openDetails() {
-    setThreadMessageId(null);
-    setDetailOpen(true);
-  }
-
-  const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
-
-  return (
-    <div className="app-frame">
-      <a className="skip-link" href="#main-content">Skip to conversation</a>
-      <WorkspaceRail profile={profile} selectedWorkspaceId={workspaceId} onSelectWorkspace={selectWorkspace} onHome={() => selectView("home")} theme={theme} onToggleTheme={toggleTheme} />
-      <WorkspaceSidebar profile={profile} workspaceId={workspaceId} selectedConversationId={conversationId} view={view} onSelectConversation={selectConversation} onSelectView={selectView} onSelectWorkspace={selectWorkspace} onCloseMobile={() => setMobileNavOpen(false)} mobileOpen={mobileNavOpen} />
-      <main id="main-content" className="main-pane" tabIndex={-1}>
-        {view === "conversation" && workspaceId === "nova" ? <ConversationPanel conversationId={conversationId} onOpenMobileNav={() => setMobileNavOpen(true)} onOpenThread={openThread} onOpenDetails={openDetails} theme={theme} onToggleTheme={toggleTheme} /> : <section className="overview-pane">
+  return <div className="app-frame">
+    <a className="skip-link" href="#main-content">Skip to main content</a>
+    <WorkspaceRail profile={profile} workspaces={workspaces} selectedWorkspaceId={workspace.id}
+      onSelectWorkspace={selectWorkspace} onHome={() => selectView("home")} theme={theme} onToggleTheme={toggleTheme} />
+    <WorkspaceSidebar profile={profile} workspace={workspace} workspaces={workspaces} channels={displayedChannels} dms={displayedDms}
+      canCreate={role === "owner" || role === "admin"} selectedConversationId={activeConversation?.id ?? ""} view={view}
+      onSelectConversation={selectChannel} onSelectDirect={selectDirect} onSelectView={selectView} onSelectWorkspace={selectWorkspace}
+      onCloseMobile={() => setMobileNavOpen(false)} mobileOpen={mobileNavOpen}
+      activityBadge={unreadActivity ? unreadActivity >= 100 ? "99+" : String(unreadActivity) : undefined} />
+    <main id="main-content" className="main-pane" tabIndex={-1}>
+      {view === "conversation" && activeConversation && initialPage
+        ? <ChannelPanel key={activeConversation.id} channel={activeConversation} initialPage={initialPage} currentUser={profile}
+            eligibleMentions={eligibleMentions}
+            onOpenMobileNav={() => setMobileNavOpen(true)} onOpenDetails={() => setDetailOpen(true)}
+            onOpenThread={() => setDetailOpen(false)}
+            onRead={() => setReadConversations((current) => new Set(current).add(activeConversation.id))}
+            theme={theme} onToggleTheme={toggleTheme} />
+        : <section className="overview-pane">
           <div className="overview-pane__top"><IconButton label="Open navigation" className="mobile-nav-trigger" onClick={() => setMobileNavOpen(true)}><Menu size={21} /></IconButton><span>{workspace.name}</span><IconButton label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} className="mobile-theme-trigger" onClick={toggleTheme}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</IconButton></div>
-          {previewState === "loading" ? <div className="state-demo"><ConversationSkeleton /><button className="text-action" type="button" onClick={() => setPreviewState("content")}>Return to workspace <ArrowRight size={16} /></button></div> : previewState === "error" ? <StateView variant="error" title="That preview couldn’t load" description="This is the Phase 1 error-state example. Your workspace data has not been affected." action={<button className="text-action" onClick={() => setPreviewState("content")}>Return to workspace <ArrowRight size={16} /></button>} /> : view === "home" ? <HomePreview workspaceName={workspace.name} isNova={workspaceId === "nova"} onSelectConversation={selectConversation} onState={setPreviewState} /> : <SectionPreview view={view} />}
+          {view === "home" ? <WorkspaceHome workspace={workspace} channels={displayedChannels}
+            canCreate={role === "owner" || role === "admin"} onSelectChannel={selectChannel} />
+            : view === "direct" ? <DirectHome workspace={workspace} dms={displayedDms} onSelectDirect={selectDirect} />
+            : view === "search" ? <MessageSearch workspaceId={workspace.id} workspaceSlug={workspace.slug}
+                dms={displayedDms} onJump={jumpToMessage} />
+            : view === "activity" ? <ActivityView workspaceId={workspace.id} workspaceSlug={workspace.slug}
+                dms={displayedDms} refreshKey={activityVersion} onRead={() => void refreshActivity()}
+                onJump={jumpToMessage} />
+            : view === "projects" && projectsContent ? projectsContent : <SectionPreview />}
         </section>}
-      </main>
-      {detailOpen && workspaceId === "nova" && view === "conversation" && <><button className="detail-scrim" type="button" aria-label="Close detail panel" onClick={() => setDetailOpen(false)} /><DetailPanel conversationId={conversationId} threadMessageId={threadMessageId} onClose={() => setDetailOpen(false)} /></>}
-    </div>
-  );
-}
-
-function HomePreview({ workspaceName, isNova, onSelectConversation, onState }: { workspaceName: string; isNova: boolean; onSelectConversation: (id: string) => void; onState: (state: PreviewState) => void }) {
-  return <div className="home-preview">
-    <div className="home-preview__eyebrow">WORKSPACE / PREVIEW</div>
-    <h1>Good morning, team<span className="home-preview__period">.</span></h1>
-    <p className="home-preview__lede">A place for the conversations that move {workspaceName} forward.</p>
-    <div className="home-preview__rule" />
-    <div className="home-preview__section-head"><div><h2>Pick up where you left off</h2><p>Fixture conversations for exploring the shell.</p></div></div>
-    {isNova ? <div className="home-preview__list">
-      {conversations.filter((item) => ["game-dev", "engineering", "general"].includes(item.id)).map((item) => <button type="button" key={item.id} onClick={() => onSelectConversation(item.id)} className="home-preview__row"><span className="home-preview__hash"><Hash size={18} /></span><span><strong>{item.name}</strong><small>{item.topic}</small></span>{item.unread && <span className="home-preview__unread">{item.unread} unread</span>}<ArrowRight size={17} /></button>)}
-    </div> : <StateView title="A new space to make your own" description="This second workspace is an empty-state preview. Creating real workspaces arrives in Phase 3." />}
-    <div className="home-preview__state-tools"><span>Explore interface states</span><button type="button" onClick={() => onState("loading")}>Loading</button><button type="button" onClick={() => onState("error")}>Error</button></div>
+    </main>
+    {detailOpen && channel && view === "conversation" && <>
+      <button className="detail-scrim" type="button" aria-label="Close detail panel" onClick={() => setDetailOpen(false)} />
+      <ChannelDetails channel={channel} role={role} currentUserId={profile.user_id}
+        workspaceMembers={workspaceMembers} memberIds={channelMemberIds} onClose={() => setDetailOpen(false)} />
+    </>}
+    {detailOpen && direct && view === "conversation" && <>
+      <button className="detail-scrim" type="button" aria-label="Close detail panel" onClick={() => setDetailOpen(false)} />
+      <DirectDetails conversation={direct} onClose={() => setDetailOpen(false)} />
+    </>}
   </div>;
 }
 
-function SectionPreview({ view }: { view: SidebarView }) {
-  const content = view === "activity"
-    ? { icon: Bell, title: "All caught up, for now", description: "Mentions, replies, and team activity will appear here once notifications are connected in Phase 7." }
-    : view === "projects"
-      ? { icon: Layers3, title: "Projects will live here", description: "Messages will connect to small tasks and decisions in Phase 8. This screen is a layout preview." }
-      : { icon: Hash, title: "Your conversations, together", description: "Choose a direct message in the sidebar. Creating conversations arrives in Phase 5." };
+function DirectHome({ workspace, dms, onSelectDirect }: {
+  workspace: Workspace; dms: DirectConversation[]; onSelectDirect: (id: string) => void;
+}) {
+  return <div className="home-preview"><div className="home-preview__eyebrow">WORKSPACE / DIRECT MESSAGES</div>
+    <h1>Your messages<span className="home-preview__period">.</span></h1>
+    <p className="home-preview__lede">Private conversations with people in {workspace.name}.</p>
+    <div className="home-preview__rule" />
+    <div className="home-preview__section-head"><div><h2>Recent conversations</h2><p>Only participants can see each message.</p></div></div>
+    {dms.length ? <div className="home-preview__list">{dms.map((item) =>
+      <button type="button" key={item.id} onClick={() => onSelectDirect(item.id)} className="home-preview__row">
+        <span className="home-preview__hash"><MessageCircle size={18} /></span>
+        <span><strong>{item.displayName}</strong><small>{item.kind === "group_direct" ? "Group message" : "Direct message"}</small></span>
+        {item.unread && <span className="home-preview__unread">New</span>}<ArrowRight size={17} />
+      </button>)}</div>
+      : <div className="channel-empty"><span><MessageCircle size={26} /></span><h2>No direct messages yet</h2>
+        <p>Start a private conversation with a workspace member.</p></div>}
+    <Link className="workspace-submit dm-new-link" href={`/w/${workspace.slug}/dm/new`}><Plus size={17} /> New message</Link>
+  </div>;
+}
+
+function WorkspaceHome({ workspace, channels, canCreate, onSelectChannel }: {
+  workspace: Workspace; channels: Channel[]; canCreate: boolean; onSelectChannel: (id: string) => void;
+}) {
+  return <div className="home-preview">
+    <div className="home-preview__eyebrow">WORKSPACE / CHANNELS</div>
+    <h1>{workspace.name}<span className="home-preview__period">.</span></h1>
+    <p className="home-preview__lede">Your team’s conversations, all in one place.</p>
+    <div className="home-preview__rule" />
+    <div className="home-preview__section-head"><div><h2>Channels</h2><p>Public channels are visible to everyone in this workspace. Private channels appear only to their members.</p></div></div>
+    {channels.length ? <div className="home-preview__list">{channels.map((item) =>
+      <button type="button" key={item.id} onClick={() => onSelectChannel(item.id)} className="home-preview__row">
+        <span className="home-preview__hash">{item.kind === "private_channel" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span>
+        <span><strong>{item.name}</strong><small>{item.topic || (item.kind === "private_channel" ? "Private channel" : "Public channel")}</small></span>
+        {item.unread && <span className="home-preview__unread">New</span>}<ArrowRight size={17} />
+      </button>)}</div>
+      : <div className="channel-empty"><span><Hash size={26} /></span><h2>No channels yet</h2>
+        <p>{canCreate ? "Create the first channel to start a durable conversation." : "Ask a workspace owner or admin to create a channel."}</p>
+        {canCreate && <Link className="workspace-submit" href={`/w/${workspace.slug}/channels/new`}><Plus size={17} /> Create channel</Link>}
+      </div>}
+    {channels.length > 0 && canCreate && <Link className="text-action" href={`/w/${workspace.slug}/channels/new`}><Plus size={16} /> Create channel</Link>}
+  </div>;
+}
+
+function SectionPreview() {
+  const content = { icon: Layers3, title: "Projects will live here", description: "Tasks and decisions arrive in Phase 8." };
   const Icon = content.icon;
   return <div className="section-preview"><span className="section-preview__icon"><Icon size={25} strokeWidth={1.7} /></span><span className="section-preview__eyebrow">COMING IN A LATER PHASE</span><StateView title={content.title} description={content.description} /></div>;
 }

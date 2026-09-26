@@ -1,6 +1,60 @@
 # Collaboration app architecture
 
-Status: proposed, for review before Phase 1. Last checked: 2026-09-24.
+Status: architecture approved; Phases 1–8 user validated. Phase 9 hardening and Phase 10 direct-upload preparation are migrated to Nova. The production Vercel URL, final-domain OAuth checks, and full data restore drill remain. Last checked: 2026-09-26.
+
+## Phase 9 beta hardening
+
+Project lists and project task/decision/activity views request bounded, ordered pages with explicit next/previous navigation. Activity uses 50-row pages; existing message/thread cursor paging and 30-hit search remain. Workspace, channel, DM, member, and invitation reads have explicit pilot bounds documented in [the free-tier envelope](phase9-free-tier.md). The mobile drawer is hidden from keyboard focus while closed. Phase 9 capped multipart upload request bodies; Phase 10 removed that route after switching to direct Storage uploads.
+
+The task UPDATE RLS policy now qualifies the task's `created_by`; previously a subquery could use the project's `created_by` and let a demoted project creator edit someone else's task. The additive migration and focused regression preserve task creator, assignee, and current owner/admin access. See [security review](phase9-security.md), [recovery guide](phase9-recovery.md), [Phase 10 deployment guide](phase10-deployment.md), and [signed-in guide](phase9-verification.md). No Vercel deployment has started.
+
+## Phase 7 files, search, and Activity
+
+`conversation-attachments` is a private Storage bucket restricted to 10 MB per object and the accepted MIME list. The browser sends bytes directly to Storage with its Supabase session, while the trusted Edge Function checks the stored bytes. A message can have at most three files and 15 MB combined. `message_attachments` stores an opaque UUID path under workspace/conversation UUIDs, original name, MIME, size, uploader, UTC `expires_at`, and a pending/validating/ready/deleting/expired state. Reservation and service-only finalization enforce ownership and limits; Storage object policies require a reservation to upload and current conversation access plus a future expiration to download. The table exposes ready or expired placeholder metadata on live messages to current readers. No signed URLs or service credentials reach the browser. Threads use this same path.
+
+On upload or inspection failure, the browser or Edge Function removes completed objects through the Storage API and soft-deletes the new message. On normal soft deletion, a trigger hides metadata and queues objects for removal. The uploader's browser retries queued work; an hourly Supabase Cron job calls a deployed Edge Function with a database-generated private token to remove abandoned pending/validating/deleting objects and expired files. The worker's hosted service credential stays inside the function. Direct SQL deletion of `storage.objects` is intentionally avoided because it does not remove the underlying file. The cleanup schedule is Nova-specific in its migration URL.
+
+`messages.search_vector` is a stored simple-language `tsvector` with a GIN index only for nondeleted messages. `search_messages` is `SECURITY INVOKER`, workspace-filtered, limited to 30 results, and inherits `messages` and `conversations` RLS. It includes replies. The UI resolves mention tokens to current profile names and uses a target message query parameter; a reply result opens its thread.
+
+`notifications` stores references and read state, not a copy of private message bodies. After message insert or edit, a trigger creates idempotent mention rows for valid non-self recipients. A new reply notifies its root author unless they wrote the reply. Recipient membership is checked at generation, and notification SELECT/UPDATE policies check current source access, so loss of access hides old activity. One private `activity:<user UUID>` Broadcast topic carries only workspace-scoped refetch hints. Activity and unread badge use bounded reads; durable rows remain authoritative. See [Phase 7 verification](phase7-files-search-activity-tests.md).
+
+## Phase 6 local time and individual mentions
+
+Postgres continues to store `timestamptz` in UTC. The shared message item renders a browser-local timestamp after hydration, using `Intl.DateTimeFormat` without a fixed timezone. Today shows time; older dates include month/day and a year when needed. A full local datetime is available on the time element. Rendering the same placeholder on the server and initial client pass avoids hydration differences across timezones.
+
+Mention-bearing message bodies store canonical `@[user-uuid]` tokens. The composer and edit field show display names, track selected mention spans, and encode them to tokens only when sending. The timeline resolves tokens through a bounded profile lookup and renders current display names with restrained emphasis, so profile rename does not sever identity. Plain `@` text, including email addresses and special words, stays plain unless a user token is selected. The browser never displays the stored UUID token as message text.
+
+The `message_mentions` relation has one row per distinct mentioned user/message and an index for recipient lookups. It has RLS enabled and no `anon` or `authenticated` table grant or policy; clients read the already-authorized message body instead. An after-insert/update trigger in `nova_private` parses tokens, validates each target against current workspace membership for public channels or explicit conversation membership for private channels and DMs, and replaces metadata in the same transaction. Soft deletion clears both the body and mention rows. Existing message RLS and owner-only editing remain authoritative. The existing ID-only message broadcasts and refetch path carry mention edits. See [Phase 6 part 1 verification](phase6-time-mentions-tests.md).
+
+## Phase 6 threads and reactions
+
+Replies reuse `messages` with nullable `parent_message_id`. A composite foreign key enforces the same conversation, and an insert trigger rejects reply-to-reply nesting. The main message RPC pages only roots; a separate bounded reply RPC pages the open thread. A bulk summary RPC gives reply counts and latest reply time for loaded roots. A soft-deleted root remains a placeholder with its reply references intact. Replies do not advance the existing top-level conversation read cursor.
+
+`message_reactions` has a unique `(message_id,user_id,emoji)` key and an indexed user lookup. RLS allows current readers to see reactions, users to add only their own curated emoji to a visible nondeleted message, and users to remove only their own row. Soft deletion removes reactions. Profiles, mention rendering, timestamps, and author edit/delete rules are reused for replies. One private Broadcast subscription per active conversation carries small message and `reaction.changed` notices, followed by authorized refetch; no subscription is created per thread or message. See [Phase 6 part 2 verification](phase6-threads-reactions-tests.md).
+
+## Phase 5 direct and group conversations
+
+`public.conversations` gains `direct` and `group_direct` kinds. A direct row stores its ordered pair of user IDs in `direct_user_low` and `direct_user_high`; a partial unique index on workspace and pair prevents duplicate 1:1 conversations under concurrent RPC calls. Both IDs reference current workspace membership. A transactional `create_or_get_direct` RPC checks the caller and recipient, inserts the row with `ON CONFLICT DO NOTHING`, and returns the existing pair when present. `create_group_direct` checks 2–11 distinct recipients, includes the creator, and inserts all memberships in the same transaction. Names and URLs contain no participant names or email addresses; the UI derives labels from visible member profiles.
+
+DM memberships are fixed after creation. The existing `conversation_members` foreign keys keep participants inside the workspace; clients still have no direct insert grant. A deferred constraint trigger checks exactly two members in a direct and at least three including the creator in a group. Direct member rows are constrained to the stored pair. Losing a workspace member removes their DM membership; a direct with fewer than two members or group with fewer than three or without its creator is removed. A channel retains its existing last-member rule. Neither workspace admins nor owners bypass DM membership.
+
+The Phase 4 message table, pagination RPC, read cursor, RLS access helper, ID-only `channel:<conversation UUID>` Broadcast topic, and browser timeline are reused for DMs. The internal topic prefix remains `channel:` for compatibility; it carries opaque conversation IDs and the policy evaluates current membership for every conversation kind. A server-authorized `/w/[workspaceSlug]/dm/[conversationId]` route uses an opaque UUID, while a bounded 50-row sidebar query bulk-loads memberships and profiles. The Phase 5 migration is applied to Nova; its transactional SQL test and Phase 3/4 regressions passed.
+
+## Current Phase 4 implementation
+
+`public.conversations` holds only `public_channel` and `private_channel` rows in Phase 4, with a unique slug per workspace. Public-channel access inherits workspace membership. `public.conversation_members` records explicit private-channel membership and has composite foreign keys to both the channel and current workspace membership. A private channel's creator is added atomically. The last private member cannot be removed, including through workspace removal, to prevent an orphaned channel.
+
+`public.messages` stores plain text, author, immutable channel/creation fields, and edit/delete timestamps. Authenticated users get column-scoped INSERT and UPDATE grants; RLS checks current channel access and message ownership. A trigger clears deleted bodies and protects identity fields. There is no table DELETE grant. `public.conversation_reads` stores a monotonic message cursor per user/channel; the sidebar uses it for a basic unread indicator. Its writes go through `mark_channel_read`.
+
+The narrow RPCs are `create_channel`, `add_private_channel_member`, `remove_private_channel_member`, `mark_channel_read`, and the security-invoker `list_channel_messages` cursor query. Role and access helpers live in the unexposed `nova_private` schema. The private Realtime topic is `channel:<conversation UUID>`; a database trigger broadcasts only message and channel IDs for create/edit/delete events. `realtime.messages` SELECT policy checks live channel access on join. The client subscribes only to its active channel, fetches authoritative rows for events, merges by ID and edit version, and refetches on reconnect or tab focus. Realtime policy caching means an already-open socket may retain access until reconnect/JWT refresh after removal; durable reads and writes are immediately denied by current RLS. See [Phase 4 verification](channel-phase4-tests.md).
+
+## Current Phase 3 implementation
+
+`public.workspaces` stores ID, unique normalized slug, name, creator, and timestamps. `public.workspace_members` stores one current row per user/workspace with owner, admin, or member role. `public.workspace_invitations` stores a SHA-256 token hash, role, expiry, use cap and count, revocation, creator, and timestamps. All three tables have RLS. Only members may select workspaces and rosters; invitations have no direct client table grant or policy. All writes use authenticated public RPC wrappers around `nova_private` functions with current `auth.uid()` and role checks. The private schema is not exposed by the Data API; definer functions use an empty search path and explicit grants.
+
+The RPCs are `create_workspace` (atomically add owner), `update_workspace_settings`, `change_workspace_member_role`, `remove_workspace_member`, `leave_workspace`, `create_workspace_invitation`, `list_workspace_invitations`, `revoke_workspace_invitation`, `preview_workspace_invitation`, and `accept_workspace_invitation`. Invitation creation returns the raw token once; only its hash persists. Accept/revoke/removal lock the workspace row and acceptance locks the invitation row, serializing use and revocation. Removal revokes outstanding links. An owner-protection trigger and role checks prevent an ownerless workspace. Ownership transfer and workspace deletion are deferred, so an owner cannot leave or be removed in Phase 3.
+
+The workspace routes are `/onboarding`, `/w/[workspaceSlug]`, `/w/[workspaceSlug]/settings`, and `/invite/[token]`. The slug resolves under member-scoped RLS; a nonmember gets a not-found response. Signed-out invitation visitors return to the invitation after GitHub OAuth and explicitly click Join. Phase 4 adds `/w/[workspaceSlug]/channels/new` and `/w/[workspaceSlug]/c/[channelSlug]`. [Workspace verification](workspace-phase3-tests.md).
 
 ## 1. Product boundary and first release
 
@@ -108,6 +162,7 @@ conversations 1---* conversation_reads *---1 auth.users
 messages 1---* messages (thread replies via parent_message_id)
 messages 1---* message_reactions / message_attachments
 workspaces 1---* workspace_invitations / notifications / projects
+projects 1---* project_tasks / project_decisions / project_activity
 ```
 
 - A reply's parent must belong to the same conversation; replies are one level deep in the UI, with the root message recorded explicitly or validated transactionally. Limit body length, attachment size/count, channel names and participant count in the database or verified operations.
@@ -154,9 +209,19 @@ Unread state is based on each user's read cursor and latest visible message, upd
 
 ## 7. Files and search
 
+Phase 10 implementation: the browser creates a message, reserves each exact UUID path through an authenticated RPC, and sends bytes directly to private Supabase Storage with its own JWT. Storage RLS checks the reservation and current conversation access. A JWT-protected Supabase Edge Function freezes all reservations as `validating`, downloads the objects with its hosted service credential, checks bytes and sizes, then calls a service-only RPC to mark them `ready` and assign a 72-hour expiry. Browser roles cannot execute finalization or mutate an object while validation is in progress. The existing hourly Storage API worker cleans stale `pending`/`validating`, deleted, and expired files. No attachment body passes through Next.js or Vercel.
+
 Use one private Supabase Storage bucket for conversation attachments. A storage path encodes workspace/conversation/random object ID; the database attachment row is the discoverable reference and carries MIME, size and original filename. Upload only after checking conversation posting rights; storage RLS verifies scope again. Restrict type, size, count and total pilot quota; randomize object names and never trust browser MIME/filename. Serve via authenticated download or short-lived signed URL. Signed URLs remain usable until expiry even after membership revocation, so keep lifetimes short and avoid caching them publicly. Add deletion/cleanup for abandoned uploads and removed messages. Keep avatars separate; choose public avatars only if users explicitly understand they are public.
 
 Start search with Postgres full-text search on message bodies and a GIN index, scoped through RLS to conversations the user may read. Limit result count and require pagination; filter by workspace and optionally conversation/date/author. Search must not leak private-channel or DM snippets through a privileged function, count, or autocomplete. No external search service is required. Revisit stemming/language support and index growth with real usage.
+
+### Phase 8 project layer
+
+`projects` are workspace scoped and use stable workspace-local slugs. All current workspace members can read active and archived projects. Only an owner/admin creates a project; its creator or a current owner/admin edits metadata and archives/reactivates it. No project-specific membership table exists.
+
+`project_tasks` have `todo`, `in_progress`, and `done` states, optional current-member assignee and due time, and optional source message ID. Members create tasks in active projects. The task creator, current assignee, or workspace owner/admin edits active tasks. A membership deletion clears assignments in the same workspace; creator IDs remain historical. `project_decisions` are append-only for V1: any member can record one in an active project, and subsequent message deletion does not remove it. Decision title/body are deliberate project text entered by the user, not an automatic private-message copy.
+
+The invoker validation trigger checks every new source ID against the caller's message/conversation RLS and same workspace before accepting it. Source IDs persist if a message is hard-deleted; the project page fetches current source context separately through ordinary RLS and excludes soft-deleted messages. An unavailable private/deleted source renders a placeholder rather than conversation metadata or text. The existing conversation URL accepts `thread` and `message` parameters to open and highlight a source. `project_activity` stores only bounded event metadata for project/task/decision creation, task status, and assignment; it contains no message body. Project pages read at most 100 projects, 150 tasks, 100 decisions, and 50 activity events per request. Realtime and project search are deferred to avoid extra Free-tier fanout and indexing.
 
 ## 8. Free-tier operating envelope and risks
 

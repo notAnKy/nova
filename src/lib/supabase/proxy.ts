@@ -4,9 +4,14 @@ import { getSupabaseConfig } from "./config";
 
 export async function updateSession(request: NextRequest) {
   const config = getSupabaseConfig();
-  const protectedRoute = request.nextUrl.pathname === "/" || request.nextUrl.pathname.startsWith("/settings/");
+  const path = request.nextUrl.pathname;
+  const protectedRoute = path === "/" || path === "/onboarding" || path.startsWith("/settings/")
+    || path.startsWith("/w/") || path.startsWith("/invite/");
   const loginRedirect = (error: string) => {
-    const result = NextResponse.redirect(new URL(`/login?error=${error}`, request.url));
+    const url = new URL("/login", request.url);
+    url.searchParams.set("error", error);
+    if (path.startsWith("/w/") || path.startsWith("/invite/")) url.searchParams.set("next", path);
+    const result = NextResponse.redirect(url);
     result.headers.set("Cache-Control", "private, no-store");
     return result;
   };

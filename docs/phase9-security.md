@@ -1,0 +1,23 @@
+# Phase 9 security and abuse review
+
+Reviewed on 2026-09-25 against Nova `bowkdnxhnqdncohnsgls`. This is a focused beta review, not a penetration test.
+
+## Authorization findings
+
+- Protected pages use the SSR session proxy and repeat `getUser()` on server entry. Workspace slugs resolve under workspace RLS and require current membership. OAuth callback accepts a code exchange and a validated relative next path; the short-lived next cookie is HTTP-only, SameSite Lax, and Secure on HTTPS. Sign-out clears the Supabase session. Roles come from `workspace_members`, never editable GitHub/profile metadata.
+- Public channel reads require workspace membership. Private channels and DMs require explicit current conversation membership, including for an admin outside the conversation. Message insert uses an immutable author default and owner-only edit/delete. Thread replies, reactions, search, notifications, and private Realtime topics recheck source access. The Phase 3–8 transactional suites cover negative access and spoofing cases.
+- Storage uses a private bucket and current conversation checks for each object read. Reservations bind opaque paths to messages; Phase 10 now checks stored content in a trusted Supabase Edge Function before service-only finalization. Expiration denies a new object download after 72 hours and the hourly worker removes the blob. No signed URL or service key is stored in a message or sent to the browser. A file already downloaded to a user's device cannot be revoked.
+- Project source links resolve through normal message and conversation RLS, so the project page shows an unavailable placeholder after deletion or access loss. Assignments must refer to current workspace members.
+- **Fixed in Phase 9:** the task UPDATE policy used an unqualified `created_by` inside a project subquery; Postgres resolved it to the project creator. After a project creator lost their leader role, they could edit another member's task. Migration `20260925203500_phase9_task_creator_policy.sql` qualifies `project_tasks.created_by` in both UPDATE predicates. A transactional test verifies denial for that demoted creator and continued access for the task creator and workspace owner.
+
+All 16 exposed `public` tables have RLS. `message_mentions` and `workspace_invitations` intentionally have no client SELECT grant or policy; narrow RPCs and triggers mediate them. `anon` has no SELECT grant on any Nova table. Privileged functions use an empty `search_path`; callable wrappers have explicit grants and current `auth.uid()` checks. There are no leftover test functions or synthetic Phase 3–9 users/workspaces.
+
+## Abuse controls and remaining limits
+
+Server actions validate names, slugs, roles, invite expiry and use counts; SQL constraints and RLS repeat the important checks. DMs cap group recipients at 11. Message body is limited to 4,000 characters, mentions to eight visible suggestions, search to 100 query characters and 30 results, and the search RPC bounds its own result count. Attachments cap three files, 10 MB each and 15 MB total, validate bytes/MIME, and expire after 72 hours. Phase 10 removed the Phase 9 multipart route, so file bodies no longer cross Vercel. Lists and project pages have explicit bounds; see [free-tier envelope](phase9-free-tier.md).
+
+These are size and authorization controls, **not** per-user request-rate limits. A distributed rate limiter for repeated workspace, invite, channel, DM, message, reaction, search, or project writes is not implemented. On a free pilot, watch Auth, database, Storage, Edge Function and Realtime usage; pause invites or disable the beta if abuse occurs. Do not describe the current design as DDoS protection.
+
+## Advisor results
+
+The Supabase security advisor reported two informational `rls_enabled_no_policy` notices for intentionally private `message_mentions` and `workspace_invitations`, plus a project-level warning that leaked-password protection is disabled. Nova currently uses GitHub OAuth, so it does not accept app passwords; revisit that setting before enabling password sign-in. The performance advisor reported eight unindexed foreign keys and ten unused indexes. The current beta has a 14 MB database, one workspace, three conversations, 28 messages, and three attachment records. Existing indexes cover actual list/read paths and important deletion checks. Avoid adding all suggested indexes to a tiny database without workload evidence; recheck advisor and `pg_stat_statements` when pilot volume grows. [Security lint reference](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy); [performance lint reference](https://supabase.com/docs/guides/database/database-linter?lint=0001_unindexed_foreign_keys).

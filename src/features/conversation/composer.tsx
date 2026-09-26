@@ -1,28 +1,73 @@
 "use client";
 
-import { useState } from "react";
-import { Bold, Code2, Paperclip, Send, Smile } from "lucide-react";
+import { useRef, useState } from "react";
+import { Paperclip, Send, X } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import type { Profile } from "@/features/profile/profile";
+import { MentionInput } from "./mention-input";
+import { encodeMentions, type MentionSpan } from "./mentions";
+import { formatFileSize, validateFileSelection } from "./attachment-files";
 
-export function Composer({ conversationName, isThread = false }: { conversationName: string; isThread?: boolean }) {
+export type MessageMutationResult = { ok: true } | { ok: false; error: string };
+
+export function Composer({ conversationLabel, eligible, onSend, disabled = false, id = "message-draft" }: {
+  conversationLabel: string; eligible: Profile[];
+  onSend: (body: string, files: File[]) => Promise<MessageMutationResult>; disabled?: boolean; id?: string;
+}) {
   const [draft, setDraft] = useState("");
-  return (
-    <div className={`composer-wrap ${isThread ? "composer-wrap--thread" : ""}`}>
-      <div className="composer" aria-label="Message composer preview">
-        <label className="sr-only" htmlFor={isThread ? "thread-draft" : "message-draft"}>Draft message for {conversationName}</label>
-        <textarea id={isThread ? "thread-draft" : "message-draft"} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={isThread ? "Reply in thread…" : `Message ${conversationName}`} rows={isThread ? 2 : 3} aria-describedby={isThread ? "thread-composer-note" : "composer-note"} />
-        <div className="composer__toolbar">
-          <div className="composer__tools">
-            <IconButton label="Formatting — available with messaging" disabled><Bold size={17} /></IconButton>
-            <IconButton label="Insert code — available with messaging" disabled><Code2 size={17} /></IconButton>
-            <span className="composer__separator" aria-hidden="true" />
-            <IconButton label="Attach file — available in Phase 7" disabled><Paperclip size={17} /></IconButton>
-            <IconButton label="Add emoji — available with messaging" disabled><Smile size={17} /></IconButton>
-          </div>
-          <button type="button" className="composer__send" disabled aria-label="Send message — available in Phase 4" title="Sending arrives in Phase 4"><Send size={16} aria-hidden="true" /><span>Send</span></button>
-        </div>
+  const [spans, setSpans] = useState<MentionSpan[]>([]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  function addFiles(selected: File[]) {
+    const next = [...files, ...selected];
+    const problem = validateFileSelection(next);
+    if (problem) { setError(problem); return; }
+    setFiles(next);
+    setError("");
+  }
+
+  async function send() {
+    const body = encodeMentions(draft, spans).trim();
+    if (sending || disabled || (!body && !files.length)) return;
+    if (body.length > 4000) { setError("Messages must be 4,000 characters or fewer."); return; }
+    setSending(true);
+    setError("");
+    try {
+      const result = await onSend(body, files);
+      if (result.ok) { setDraft(""); setSpans([]); setFiles([]); if (fileInput.current) fileInput.current.value = ""; }
+      else setError(result.error);
+    } catch { setError("We couldn’t send this message. Your draft is still here."); }
+    finally { setSending(false); }
+  }
+
+  return <div className="composer-wrap">
+    <div className="composer" aria-label={`Message composer for ${conversationLabel}`}>
+      <label className="sr-only" htmlFor={id}>Message {conversationLabel}</label>
+      <MentionInput id={id} value={draft} spans={spans} eligible={eligible}
+        onChange={(value, nextSpans) => { setDraft(value); setSpans(nextSpans); }} onSubmit={() => void send()}
+        placeholder={disabled ? "You can’t send to this conversation" : `Message ${conversationLabel}`}
+        rows={3} disabled={disabled || sending} describedBy={`${id}-note`} />
+      {files.length > 0 && <ul className="composer-files" aria-label="Selected files">{files.map((file, index) =>
+        <li key={`${file.name}-${index}`}><Paperclip size={14} /><span title={file.name}>{file.name}</span>
+          <small>{formatFileSize(file.size)}</small><button type="button" aria-label={`Remove ${file.name}`}
+            disabled={sending} onClick={() => setFiles((current) => current.filter((_, at) => at !== index))}><X size={15} /></button></li>)}</ul>}
+      <div className="composer__toolbar"><div className="composer__tools">
+        <input ref={fileInput} type="file" className="sr-only" multiple tabIndex={-1} aria-label="Choose files to attach"
+          accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.markdown,.csv,.json"
+          disabled={disabled || sending} onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? [])); event.target.value = "";
+          }} />
+        <IconButton label="Attach files" disabled={disabled || sending} onClick={() => fileInput.current?.click()}><Paperclip size={17} /></IconButton>
       </div>
-      <p className="composer-note" id={isThread ? "thread-composer-note" : "composer-note"}>Preview only · Drafts are not saved or sent.</p>
+        <button type="button" className="composer__send" disabled={disabled || sending || (!draft.trim() && !files.length)} onClick={() => void send()}>
+          <Send size={16} aria-hidden="true" /><span>{sending ? (files.length ? "Uploading…" : "Sending…") : "Send"}</span>
+        </button>
+      </div>
     </div>
-  );
+    <p className="composer-note" id={`${id}-note`}>Enter to send · Shift+Enter for a new line · Type @ to mention someone</p>
+    {error && <p className="workspace-feedback is-error" role="alert">{error}</p>}
+  </div>;
 }

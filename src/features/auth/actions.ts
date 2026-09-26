@@ -1,14 +1,19 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseConfig } from "@/lib/supabase/config";
+import { safeNextPath } from "./safe-next";
 
-export async function signInWithGitHub() {
+export async function signInWithGitHub(formData: FormData) {
   if (!getSupabaseConfig()) redirect("/login?error=configuration");
   const origin = (await headers()).get("origin");
   if (!origin) redirect("/login?error=unavailable");
+  (await cookies()).set("nova-auth-next", safeNextPath(formData.get("next")), {
+    httpOnly: true, sameSite: "lax", secure: origin.startsWith("https://"),
+    path: "/auth/callback", maxAge: 600,
+  });
   const supabase = await createClient();
   let target: string | undefined;
   try {

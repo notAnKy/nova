@@ -18,6 +18,10 @@ next-env.d.ts
 .DS_Store
 Thumbs.db
 *.log
+*.dump
+*.backup
+*.sql.gz
+backups/
 
 # Local visual QA artifacts
 .chrome-*/

@@ -3,6 +3,7 @@ import { signInWithGitHub } from "@/features/auth/actions";
 import { GitHubButton } from "@/features/auth/github-button";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { safeNextPath } from "@/features/auth/safe-next";
 
 const errors: Record<string, string> = {
   configuration: "Supabase isn’t configured yet. Add your project URL and publishable key to .env.local.",
@@ -13,7 +14,9 @@ const errors: Record<string, string> = {
   expired: "Your session ended. Sign in again to continue.",
 };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; signed_out?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; signed_out?: string; next?: string }> }) {
+  const params = await searchParams;
+  const next = safeNextPath(params.next);
   const configured = !!getSupabaseConfig();
   let authUnavailable = false;
   if (configured) {
@@ -23,9 +26,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       const { data } = await supabase.auth.getClaims();
       authenticated = !!data?.claims;
     } catch { authUnavailable = true; }
-    if (authenticated) redirect("/");
+    if (authenticated) redirect(next);
   }
-  const params = await searchParams;
   const message = params.error ? errors[params.error] ?? errors.unavailable : authUnavailable ? errors.service_unavailable : null;
 
   return <main className="auth-page">
@@ -36,8 +38,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <p>Sign in to continue to your workspace.</p>
       {message && <div className="auth-alert" role="alert">{message}</div>}
       {!message && params.signed_out && <div className="auth-success" role="status">You’ve signed out.</div>}
-      {configured ? <form action={signInWithGitHub}><GitHubButton /></form> : !message && <div className="auth-alert" role="alert">Supabase isn’t configured yet. Add your project URL and publishable key to .env.local.</div>}
-      <div className="auth-card__foot">Your workspace content is a preview during Phase 2.</div>
+      {configured ? <form action={signInWithGitHub}><input type="hidden" name="next" value={next} /><GitHubButton /></form> : !message && <div className="auth-alert" role="alert">Supabase isn’t configured yet. Add your project URL and publishable key to .env.local.</div>}
+      <div className="auth-card__foot">Your workspace is ready when you are.</div>
     </div>
   </main>;
 }
