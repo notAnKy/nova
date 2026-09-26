@@ -10,11 +10,18 @@ Pasting a clipboard file into either message or thread composer uses the existin
 
 Escape respects `defaultPrevented`, IME composition, modifiers, and local dialog/menu/thread handlers. Secondary pages use a known prior in-app path when available, otherwise their defined parent. The fallback never navigates outside Nova.
 
+## Typing and conversation navigation
+
+Migration `20260926123429_private_typing_broadcast.sql` adds an authenticated INSERT policy for Broadcast on the existing `channel:<conversation UUID>` private topic. It calls the same conversation-reader authorization function used by the SELECT policy. No typing table, durable row, sidebar subscription, dashboard change, or new Realtime topic is added. The active conversation subscription sends only user ID and active/stopped state; receivers resolve display names from their already authorized participant list and ignore their own ID. Typing is sent at most once per 1.5 seconds while input changes, stops after 2.5 seconds of inactivity or successful send, and remote entries expire after 6 seconds even if a stop event is lost. Empty drafts, route departure, unmount, offline state, and connection loss clear typing. Reconnection starts with an empty typing state.
+
+Each conversation route still loads its authorized shell and initial timeline before completion. Sidebar clicks now begin a React navigation transition: the clicked item is highlighted immediately, the old timeline is replaced by a quiet skeleton, and the current sidebar remains visible. The pending state follows the transition, so completion or failure returns to route-derived selection. Disclosure state for Channels and Direct messages survives client route changes. The DM route now reuses its already fetched workspace role instead of requesting it twice. No authenticated data is globally cached.
+
 ## Automated checks
 
 - `node --experimental-strip-types tests/postdeploy_ux.mjs`: helper checks for account query parameter, clipboard handling and limits, scroll/read decisions, ID deduplication, and safe Escape routing.
 - `supabase/tests/postdeploy_realtime_unread.sql`: transactional public/private fanout, reply exclusion, no read-on-hint, outsider exclusion, and revoked-member exclusion.
 - `tests/postdeploy_realtime_local.mjs`: local three-account network test for public, private, and direct Realtime delivery, user hints, explicit read cursor, and outsider denial. Supply local-only values from `supabase status -o json` as `LOCAL_SUPABASE_URL`, `LOCAL_SUPABASE_PUBLISHABLE_KEY`, and `LOCAL_SUPABASE_SERVICE_ROLE_KEY`.
+- `node --experimental-strip-types tests/typing_state.mjs`: identity filtering, stop, multiple names, throttle constants, and defensive stale expiry. The local Realtime network test also checks typing start/stop on public, private, and direct conversations under the same private topic policy.
 - Phase 3–9 transactional SQL suites, Phase 7 attachment JS tests, Phase 9 pagination test, and Phase 10 direct-upload/content/local Storage integration were rerun. Lint, typecheck, build, and `git diff --check` passed.
 
 ## Production browser check
@@ -23,3 +30,5 @@ Escape respects `defaultPrevented`, IME composition, modifiers, and local dialog
 2. Paste a screenshot, a text-only clipboard, and an unsupported file into a message and a thread. Send a valid file and confirm the existing direct upload, private download, and expiration display.
 3. With two accounts, test the same public channel at bottom and scrolled up; check the jump button, read cursor/unread indicator, and no duplicate rows. Send in a different channel, private channel, and DM; the other account's sidebar should update without refreshing. An outsider must not subscribe to or read a private conversation.
 4. Press Escape in mention suggestions, a workspace menu, thread/detail panel, profile, workspace settings, and project detail. A hard-loaded secondary route should fall back to its parent; Escape must remain within Nova.
+5. In two signed-in browser sessions, open the same public channel, a private channel shared by both users, and a DM. Type without sending, then pause, clear the draft, and send; the other participant should see and then lose the typing row. Repeat with two concurrent typers in a group. Check a private outsider cannot join its topic and that switching conversations or disconnecting does not leave a ghost indicator.
+6. Switch repeatedly among a public channel, private channel, and DM, including with network throttling. The clicked sidebar item and main skeleton should respond immediately while the sidebar stays in place; pending state should clear on completion or failed navigation. Check back/forward, unread/read state, collapsed sidebar sections, and Escape behavior.

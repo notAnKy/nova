@@ -83,7 +83,7 @@ The [Phase 9 task authorization test](supabase/tests/phase9_task_creator_policy.
 
 Phase 10 direct-upload, Edge inspection, local API, and Phase 3–9 regression results are recorded in the [Phase 10 verification report](docs/phase10-verification.md). Real signed-in browser checks on the final Vercel domain remain manual.
 
-The [postdeployment UX verification](docs/postdeploy-ux-verification.md) covers account selection, clipboard attachments, Realtime unread hints, scroll/read behavior, Escape routing, and the additive migration `20260926115326_realtime_unread_hints.sql`.
+The [postdeployment UX verification](docs/postdeploy-ux-verification.md) covers account selection, clipboard attachments, Realtime unread hints, scroll/read behavior, Escape routing, and active-conversation typing and navigation feedback. The additive Realtime migrations are `20260926115326_realtime_unread_hints.sql` and `20260926123429_private_typing_broadcast.sql`.
 
 ## Deployment notes
 

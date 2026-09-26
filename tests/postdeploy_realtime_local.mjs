@@ -81,6 +81,11 @@ const direct = await a.db.rpc("create_or_get_direct", { p_workspace_id: workspac
 assert.ifError(direct.error);
 const dmId = direct.data.id;
 
+const anonymous = createClient(url, publishable, { auth: { persistSession: false } });
+const anonymousTopic = anonymous.channel(`channel:${publicId}`, { config: { private: true } });
+assert.notEqual((await subscribed(anonymousTopic)).status, "SUBSCRIBED");
+await anonymous.removeChannel(anonymousTopic);
+
 const hints = a.db.channel(`activity:${a.id}`, { config: { private: true } });
 const hint = listenEvents(hints, "conversation.changed");
 assert.equal((await subscribed(hints)).status, "SUBSCRIBED");
@@ -91,6 +96,22 @@ const publicEvent = messageEvent(publicId), publicHint = hint(publicId);
 const first = await send(b.db, publicId, "Sent by B to A");
 assert.equal((await publicEvent).message_id, first.id);
 assert.equal((await publicHint).conversation_id, publicId);
+async function verifyTyping(conversationId) {
+  const receiver = b.db.channel(`channel:${conversationId}`, { config: { private: true } });
+  const typed = listenEvents(receiver, "typing.changed");
+  assert.equal((await subscribed(receiver)).status, "SUBSCRIBED");
+  const started = typed(conversationId);
+  assert.equal(await active.send({ type: "broadcast", event: "typing.changed",
+    payload: { conversation_id: conversationId, user_id: a.id, active: true } }), "ok");
+  const startedPayload = await started;
+  assert.deepEqual({ user_id: startedPayload.user_id, active: startedPayload.active }, { user_id: a.id, active: true });
+  const stopped = typed(conversationId);
+  assert.equal(await active.send({ type: "broadcast", event: "typing.changed",
+    payload: { conversation_id: conversationId, user_id: a.id, active: false } }), "ok");
+  assert.equal((await stopped).active, false);
+  await b.db.removeChannel(receiver);
+}
+await verifyTyping(publicId);
 assert.deepEqual(mergeMessages([], [first, first]).map((row) => row.id), [first.id]);
 assert.equal((await a.db.from("conversation_reads").select("conversation_id").eq("conversation_id", publicId)).data.length, 0);
 assert.ifError((await a.db.rpc("mark_channel_read", { p_conversation_id: publicId, p_message_id: first.id })).error);
@@ -99,6 +120,9 @@ assert.equal((await a.db.from("conversation_reads").select("conversation_id").eq
 const outsider = c.db.channel(`channel:${privateId}`, { config: { private: true } });
 assert.notEqual((await subscribed(outsider)).status, "SUBSCRIBED");
 await c.db.removeChannel(outsider);
+const dmOutsider = c.db.channel(`channel:${dmId}`, { config: { private: true } });
+assert.notEqual((await subscribed(dmOutsider)).status, "SUBSCRIBED");
+await c.db.removeChannel(dmOutsider);
 await a.db.removeChannel(active);
 active = a.db.channel(`channel:${privateId}`, { config: { private: true } });
 messageEvent = listenEvents(active, "message.created");
@@ -107,6 +131,7 @@ const privateEvent = messageEvent(privateId), privateHint = hint(privateId);
 const second = await send(b.db, privateId, "Private message");
 assert.equal((await privateEvent).message_id, second.id);
 assert.equal((await privateHint).conversation_id, privateId);
+await verifyTyping(privateId);
 assert.equal((await c.db.from("messages").select("id").eq("id", second.id)).data.length, 0);
 
 await a.db.removeChannel(active);
@@ -117,9 +142,11 @@ const dmEvent = messageEvent(dmId), dmHint = hint(dmId);
 const third = await send(b.db, dmId, "Direct message");
 assert.equal((await dmEvent).message_id, third.id);
 assert.equal((await dmHint).conversation_id, dmId);
+await verifyTyping(dmId);
 assert.equal((await c.db.from("messages").select("id").eq("id", third.id)).data.length, 0);
 
 await a.db.removeChannel(active);
 await a.db.removeChannel(hints);
 for (const person of [a, b, c]) person.db.realtime.disconnect();
-console.log("Local two-user public, private, DM Realtime and unread integration passed");
+anonymous.realtime.disconnect();
+console.log("Local two-user public, private, DM Realtime, typing, and unread integration passed");

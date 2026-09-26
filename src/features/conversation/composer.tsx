@@ -10,9 +10,10 @@ import { appendAttachmentFiles, formatFileSize, prepareClipboardFiles } from "./
 
 export type MessageMutationResult = { ok: true } | { ok: false; error: string };
 
-export function Composer({ conversationLabel, eligible, onSend, disabled = false, id = "message-draft" }: {
+export function Composer({ conversationLabel, eligible, onSend, onDraftChange, onSent, disabled = false, id = "message-draft" }: {
   conversationLabel: string; eligible: Profile[];
   onSend: (body: string, files: File[]) => Promise<MessageMutationResult>; disabled?: boolean; id?: string;
+  onDraftChange?: (value: string) => void; onSent?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [spans, setSpans] = useState<MentionSpan[]>([]);
@@ -36,7 +37,7 @@ export function Composer({ conversationLabel, eligible, onSend, disabled = false
     setError("");
     try {
       const result = await onSend(body, files);
-      if (result.ok) { setDraft(""); setSpans([]); setFiles([]); if (fileInput.current) fileInput.current.value = ""; }
+      if (result.ok) { setDraft(""); setSpans([]); setFiles([]); onSent?.(); if (fileInput.current) fileInput.current.value = ""; }
       else setError(result.error);
     } catch { setError("We couldn’t send this message. Your draft is still here."); }
     finally { setSending(false); }
@@ -46,7 +47,7 @@ export function Composer({ conversationLabel, eligible, onSend, disabled = false
     <div className="composer" aria-label={`Message composer for ${conversationLabel}`}>
       <label className="sr-only" htmlFor={id}>Message {conversationLabel}</label>
       <MentionInput id={id} value={draft} spans={spans} eligible={eligible}
-        onChange={(value, nextSpans) => { setDraft(value); setSpans(nextSpans); }} onSubmit={() => void send()}
+        onChange={(value, nextSpans) => { setDraft(value); setSpans(nextSpans); onDraftChange?.(value); }} onSubmit={() => void send()}
         onPaste={(event) => {
           const clipboard = event.clipboardData;
           const selected = Array.from(clipboard.files.length ? clipboard.files :

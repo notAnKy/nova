@@ -13,6 +13,10 @@ import type { DirectConversation } from "@/features/direct/data";
 
 export type SidebarView = "home" | "activity" | "search" | "direct" | "projects" | "conversation";
 
+// The page shell is recreated for each conversation route. Keep only disclosure UI
+// state across those client navigations; no workspace data is cached here.
+const sectionState = new Map<string, { channels: boolean; dms: boolean }>();
+
 type WorkspaceSidebarProps = {
   profile: Profile;
   workspace: Workspace;
@@ -21,6 +25,7 @@ type WorkspaceSidebarProps = {
   dms: DirectConversation[];
   canCreate: boolean;
   selectedConversationId: string;
+  pendingConversationId?: string | null;
   view: SidebarView;
   onSelectConversation: (id: string) => void;
   onSelectDirect: (id: string) => void;
@@ -31,9 +36,9 @@ type WorkspaceSidebarProps = {
   activityBadge?: string;
 };
 
-export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms, canCreate, selectedConversationId, view, onSelectConversation, onSelectDirect, onSelectView, onSelectWorkspace, onCloseMobile, mobileOpen, activityBadge }: WorkspaceSidebarProps) {
-  const [channelsOpen, setChannelsOpen] = useState(true);
-  const [dmsOpen, setDmsOpen] = useState(true);
+export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms, canCreate, selectedConversationId, pendingConversationId, view, onSelectConversation, onSelectDirect, onSelectView, onSelectWorkspace, onCloseMobile, mobileOpen, activityBadge }: WorkspaceSidebarProps) {
+  const [channelsOpen, setChannelsOpen] = useState(() => sectionState.get(workspace.id)?.channels ?? true);
+  const [dmsOpen, setDmsOpen] = useState(() => sectionState.get(workspace.id)?.dms ?? true);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   useEffect(() => {
     if (!workspaceMenuOpen) return;
@@ -92,16 +97,20 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
           </nav>
           <div className="sidebar-section">
             <div className="sidebar-section__head">
-              <button type="button" className="sidebar-section__toggle" aria-expanded={channelsOpen} onClick={() => setChannelsOpen(!channelsOpen)}>
+              <button type="button" className="sidebar-section__toggle" aria-expanded={channelsOpen} onClick={() => {
+                const next = !channelsOpen;
+                sectionState.set(workspace.id, { channels: next, dms: dmsOpen });
+                setChannelsOpen(next);
+              }}>
                 {channelsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span>Channels</span>
               </button>
               {canCreate && <Link href={`/w/${workspace.slug}/channels/new`} className="icon-button sidebar-add-channel" aria-label="Create channel" title="Create channel"><Plus size={16} /></Link>}
             </div>
             {channelsOpen && <div className="sidebar-section__items">
               {channels.map((item) => (
-                <button key={item.id} type="button" className={`sidebar-channel ${view === "conversation" && selectedConversationId === item.id ? "is-selected" : ""} ${item.unread ? "has-unread" : ""}`} aria-current={view === "conversation" && selectedConversationId === item.id ? "page" : undefined} onClick={() => onSelectConversation(item.id)}>
+                <button key={item.id} type="button" className={`sidebar-channel ${pendingConversationId === item.id || view === "conversation" && !pendingConversationId && selectedConversationId === item.id ? "is-selected" : ""} ${pendingConversationId === item.id ? "is-opening" : ""} ${item.unread ? "has-unread" : ""}`} aria-current={view === "conversation" && !pendingConversationId && selectedConversationId === item.id ? "page" : undefined} aria-busy={pendingConversationId === item.id || undefined} onClick={() => onSelectConversation(item.id)}>
                   {item.kind === "private_channel" ? <LockKeyhole size={16} aria-hidden="true" /> : <Hash size={17} aria-hidden="true" />}
-                  <span>{item.name}</span>{item.unread && <span className="sidebar-unread" aria-label="Unread messages">•</span>}
+                  <span>{item.name}</span>{pendingConversationId === item.id && <span className="sidebar-opening" aria-hidden="true" />}{item.unread && <span className="sidebar-unread" aria-label="Unread messages">•</span>}
                 </button>
               ))}
               {!channels.length && <p className="sidebar-section__hint">No channels yet.</p>}
@@ -110,7 +119,11 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
           </div>
           <div className="sidebar-section sidebar-section--dms">
             <div className="sidebar-section__head">
-              <button type="button" className="sidebar-section__toggle" aria-expanded={dmsOpen} onClick={() => setDmsOpen(!dmsOpen)}>
+              <button type="button" className="sidebar-section__toggle" aria-expanded={dmsOpen} onClick={() => {
+                const next = !dmsOpen;
+                sectionState.set(workspace.id, { channels: channelsOpen, dms: next });
+                setDmsOpen(next);
+              }}>
                 {dmsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span>Direct messages</span>
               </button>
               <Link href={`/w/${workspace.slug}/dm/new`} className="icon-button sidebar-add-channel" aria-label="New direct message" title="New message"><Plus size={16} /></Link>
@@ -119,13 +132,13 @@ export function WorkspaceSidebar({ profile, workspace, workspaces, channels, dms
               {dms.map((item) => {
                 const other = item.kind === "direct" ? item.participants.find((person) => person.user_id !== profile.user_id) : null;
                 const groupFaces = item.kind === "group_direct" ? item.participants.filter((person) => person.user_id !== profile.user_id).slice(0, 2) : [];
-                return <button key={item.id} type="button" className={`sidebar-channel sidebar-dm ${view === "conversation" && selectedConversationId === item.id ? "is-selected" : ""} ${item.unread ? "has-unread" : ""}`}
-                  aria-current={view === "conversation" && selectedConversationId === item.id ? "page" : undefined}
+                return <button key={item.id} type="button" className={`sidebar-channel sidebar-dm ${pendingConversationId === item.id || view === "conversation" && !pendingConversationId && selectedConversationId === item.id ? "is-selected" : ""} ${pendingConversationId === item.id ? "is-opening" : ""} ${item.unread ? "has-unread" : ""}`}
+                  aria-current={view === "conversation" && !pendingConversationId && selectedConversationId === item.id ? "page" : undefined} aria-busy={pendingConversationId === item.id || undefined}
                   onClick={() => onSelectDirect(item.id)}>
                   {other ? <ProfileAvatar profile={other} /> : groupFaces.length
                     ? <span className="dm-avatar-stack" aria-hidden="true">{groupFaces.map((person) => <ProfileAvatar key={person.user_id} profile={person} />)}</span>
                     : <UsersRound size={17} aria-hidden="true" />}
-                  <span>{item.displayName}</span>{item.unread && <span className="sidebar-unread" aria-label="Unread messages">•</span>}
+                  <span>{item.displayName}</span>{pendingConversationId === item.id && <span className="sidebar-opening" aria-hidden="true" />}{item.unread && <span className="sidebar-unread" aria-label="Unread messages">•</span>}
                 </button>;
               })}
               {!dms.length && <p className="sidebar-section__hint">No direct messages yet.</p>}

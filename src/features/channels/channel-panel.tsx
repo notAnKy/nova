@@ -16,6 +16,7 @@ import type { DirectConversation } from "@/features/direct/data";
 import { cleanUpOwnAttachments } from "@/features/conversation/attachment-files";
 import { uploadMessageAttachments } from "@/features/conversation/direct-upload";
 import { mergeFresh, mergeMessages, nearTimelineBottom, shouldAdvanceReadCursor } from "./timeline-behavior";
+import { expireTypingEntries, TYPING_IDLE_MS, TYPING_THROTTLE_MS, typingLabel, typingSender, updateTypingEntries, type TypingEntry } from "@/features/conversation/typing-state";
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -41,6 +42,12 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadLoadingOlder, setThreadLoadingOlder] = useState(false);
   const [threadNotice, setThreadNotice] = useState("");
+  const [remoteTypers, setRemoteTypers] = useState<TypingEntry[]>([]);
+  const typingChannel = useRef<ReturnType<typeof db.channel> | null>(null);
+  const typingConnected = useRef(false);
+  const typingActive = useRef(false);
+  const lastTypingSent = useRef(0);
+  const typingIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedIds = useRef(messages.map((message) => message.id));
   const loadedReplyIds = useRef<string[]>([]);
   const lastMarked = useRef("");
@@ -52,6 +59,8 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   const isDirect = channel.kind === "direct" || channel.kind === "group_direct";
   const displayName = isDirect ? channel.displayName : channel.name;
   const conversationLabel = isDirect ? displayName : `#${displayName}`;
+  const typingNames = useMemo(() => new Map(eligibleMentions.map((person) => [person.user_id, person.display_name])), [eligibleMentions]);
+  const typingText = typingLabel(remoteTypers, typingNames);
   const directStatus = channel.kind === "direct"
     ? channel.participants.find((person) => person.user_id !== currentUser.user_id)?.status_text : "";
   const Icon = channel.kind === "private_channel" ? LockKeyhole
@@ -61,6 +70,40 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
   useEffect(() => { loadedReplyIds.current = replies.map((message) => message.id); }, [replies]);
   useEffect(() => { onReadRef.current = onRead; }, [onRead]);
   useEffect(() => { void cleanUpOwnAttachments(db); }, [db]);
+
+  const broadcastTyping = useCallback((active: boolean) => {
+    if (!typingConnected.current || !typingChannel.current) return;
+    void typingChannel.current.send({ type: "broadcast", event: "typing.changed",
+      payload: { user_id: currentUser.user_id, active } }).catch(() => {});
+  }, [currentUser.user_id]);
+
+  const stopTyping = useCallback(() => {
+    if (typingIdleTimer.current) clearTimeout(typingIdleTimer.current);
+    typingIdleTimer.current = null;
+    if (typingActive.current) broadcastTyping(false);
+    typingActive.current = false;
+    lastTypingSent.current = 0;
+  }, [broadcastTyping]);
+
+  const onDraftChange = useCallback((value: string) => {
+    if (!value.trim()) { stopTyping(); return; }
+    const now = Date.now();
+    if (!typingActive.current || now - lastTypingSent.current >= TYPING_THROTTLE_MS) {
+      broadcastTyping(true);
+      lastTypingSent.current = now;
+    }
+    typingActive.current = true;
+    if (typingIdleTimer.current) clearTimeout(typingIdleTimer.current);
+    typingIdleTimer.current = setTimeout(stopTyping, TYPING_IDLE_MS);
+  }, [broadcastTyping, stopTyping]);
+
+  useEffect(() => {
+    if (!remoteTypers.length) return;
+    const nextExpiry = Math.min(...remoteTypers.map((entry) => entry.expiresAt));
+    const timer = setTimeout(() => setRemoteTypers((current) => expireTypingEntries(current, Date.now())),
+      Math.max(0, nextExpiry - Date.now()));
+    return () => clearTimeout(timer);
+  }, [remoteTypers]);
 
   useEffect(() => {
     if (!targetMessageId || !idPattern.test(targetMessageId)) return;
@@ -227,7 +270,15 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
       } catch { if (!closed) { void refreshDurable(); void refreshThread(); } }
     }
 
-    function onFocus() { if (document.visibilityState === "visible") { void refreshDurable(); void refreshThread(); } }
+    function onFocus() {
+      if (document.visibilityState === "visible") { void refreshDurable(); void refreshThread(); }
+      else { stopTyping(); setRemoteTypers([]); }
+    }
+    function onOffline() {
+      typingConnected.current = false;
+      stopTyping();
+      setRemoteTypers([]);
+    }
     async function connect() {
       try {
         await db.realtime.setAuth();
@@ -237,23 +288,45 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
           .on("broadcast", { event: "message.updated" }, ({ payload }) => void handleNotice(payload, "message.updated"))
           .on("broadcast", { event: "message.deleted" }, ({ payload }) => void handleNotice(payload, "message.deleted"))
           .on("broadcast", { event: "reaction.changed" }, ({ payload }) => void handleNotice(payload, "reaction.changed"))
+          .on("broadcast", { event: "typing.changed" }, ({ payload }) => {
+            const userId = typingSender(payload, currentUser.user_id, typingNames);
+            if (!userId) return;
+            setRemoteTypers((current) => updateTypingEntries(current, userId, payload.active, Date.now()));
+          })
           .subscribe((status) => {
             if (closed) return;
-            if (status === "SUBSCRIBED") { void refreshDurable(); void refreshThread(); }
-            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setNotice("Connection interrupted. Messages will refresh when it reconnects.");
+            if (status === "SUBSCRIBED") {
+              typingChannel.current = subscription;
+              typingConnected.current = true;
+              stopTyping();
+              setRemoteTypers([]);
+              void refreshDurable(); void refreshThread();
+            }
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              typingConnected.current = false;
+              typingChannel.current = null;
+              stopTyping();
+              setRemoteTypers([]);
+              if (status !== "CLOSED") setNotice("Connection interrupted. Messages will refresh when it reconnects.");
+            }
           });
       } catch { if (!closed) setNotice("Live updates unavailable. Reopen the conversation to retry."); }
     }
     void connect();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       closed = true;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onFocus);
+      stopTyping();
+      typingConnected.current = false;
+      typingChannel.current = null;
       if (subscription) void db.removeChannel(subscription);
     };
-  }, [db, channel.id, currentUser.user_id, refreshDurable, refreshThread, reflectMessage, threadId]);
+  }, [db, channel.id, currentUser.user_id, refreshDurable, refreshThread, reflectMessage, threadId, stopTyping, typingNames]);
 
   async function loadOlder() {
     if (!olderCursor || loadingOlder) return;
@@ -396,7 +469,9 @@ export function ChannelPanel({ channel, initialPage, currentUser, eligibleMentio
     {newMessageIds.length > 0 && <button className="jump-new-messages" type="button" onClick={() => {
       timeline.current?.scrollTo({ top: timeline.current.scrollHeight, behavior: "smooth" });
     }}>↓ {newMessageIds.length} new {newMessageIds.length === 1 ? "message" : "messages"}</button>}
+    <div className="typing-indicator" role="status" aria-live="polite" aria-atomic="true">{typingText}</div>
     <Composer conversationLabel={conversationLabel} eligible={eligibleMentions} onSend={send}
+      onDraftChange={onDraftChange} onSent={stopTyping}
       disabled={!!notice && notice.startsWith("Your access")} />
   </section>
   {threadId && <ThreadPanel root={threadRoot?.id === threadId ? threadRoot : null}
