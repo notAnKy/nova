@@ -1,6 +1,30 @@
 # Nova — collaboration workspace
 
-Nova has public/private channels, direct/group messages, one-level threads, reactions, individual @mentions, private attachments, workspace message search, in-app Activity, and lightweight workspace projects with tasks and decisions. Phases 1–8 were manually validated. Phase 9 hardens access control, upload bounds, navigation, and project/Activity pagination; its signed-in walkthrough and full data restore drill remain. GitHub sign-in, profiles, workspaces, roles, and invitation links remain live.
+Nova is a real-time workspace for team conversations and the work that comes out of them. Teams can talk in public or private channels, start one-to-one or group direct messages, and turn a message into a task or decision. GitHub sign-in and workspace invitations get members in; conversation and workspace membership determine what each person can see.
+
+## A look inside
+
+![Nova workspace showing the Direct messages list, channel sidebar, and workspace navigation](docs/screenshots/nova-direct-messages.png)
+
+*A workspace keeps channels, direct messages, Activity, and Projects within reach.*
+
+![Nova New message screen for choosing workspace members](docs/screenshots/nova-new-message.png)
+
+*Start a private conversation with one or more workspace members.*
+
+These captures show the `test1` development workspace. They illustrate the app UI; the current production workspace and content will differ.
+
+## What you can do
+
+- **Talk in context.** Use public and member-only private channels, direct and group messages, one-level threads, emoji reactions, and individual `@mentions`. Typing indicators and unread hints update through private Realtime topics.
+- **Find what matters.** Search messages within the current workspace and use Activity to review mentions and thread replies. Conversation links open the shared timeline and composer.
+- **Keep decisions actionable.** Create workspace projects with tasks and decisions. Link an item to a source message without copying private message text into a project everyone can read.
+- **Share files privately.** Attach supported images and documents directly through Supabase Storage. Files are validated before they become downloadable and expire after 72 hours; the message remains with an **Attachment expired** label.
+- **Control access.** Workspace roles govern administration, while channel membership and DM participation govern conversation access. Database row-level security and Storage policies enforce these boundaries.
+
+## How Nova is built
+
+The interface uses Next.js App Router, React, and TypeScript. Supabase provides GitHub-backed authentication, Postgres, row-level security, private Realtime channels, and Storage. Trusted Edge Functions inspect uploads and clean up abandoned, deleted, or expired attachments. Vercel hosts the Next.js app; its root layout includes Vercel Web Analytics and Speed Insights. The browser uploads attachment bytes straight to Supabase Storage, so those files do not pass through a Vercel route.
 
 ## Requirements
 
@@ -87,7 +111,7 @@ The [postdeployment UX verification](docs/postdeploy-ux-verification.md) covers 
 
 ## Deployment notes
 
-The existing Vercel deployment uses only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Keep the configured production and localhost Auth callback URLs, GitHub's Supabase provider callback, and the GitHub client secret in its current dashboard location. Do not cache authenticated pages or responses containing refreshed auth cookies. Once the postdeployment UX changes are committed, a push to the connected production branch should trigger a Vercel redeploy; confirm the deployment in Vercel before retesting. The [Phase 10 deployment guide](docs/phase10-deployment.md) describes the original setup.
+The existing Vercel deployment uses only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`; the Analytics and Speed Insights components add no app environment variables. Keep the configured production and localhost Auth callback URLs, GitHub's Supabase provider callback, and the GitHub client secret in its current dashboard location. Do not cache authenticated pages or responses containing refreshed auth cookies. A push to the connected `main` branch triggers a Vercel redeploy; confirm it in Vercel before retesting. The [Phase 10 deployment guide](docs/phase10-deployment.md) describes the original setup.
 
 ## Project layout
 
